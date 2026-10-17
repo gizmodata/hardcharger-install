@@ -195,6 +195,11 @@ do_uninstall() {
     info "Nothing to remove: $PREFIX does not exist"
     return 0
   fi
+  if [ -z "$(ls -A "$PREFIX" 2>/dev/null)" ]; then
+    rmdir "$PREFIX"
+    info "Removed $PREFIX (it was empty)"
+    return 0
+  fi
   [ -d "$VERSIONS" ] || [ -d "$BIN" ] || fatal "$PREFIX does not look like a Hardcharger install (no versions/ or bin/); not removing it"
   rm -rf "$PREFIX"
   info "Removed $PREFIX"

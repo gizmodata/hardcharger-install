@@ -172,6 +172,8 @@ else
   expect "Hardcharger $OLD has no $ASSET to download"
   expect "set HARDCHARGER_INSTALL_TOKEN"
   [ ! -e "$ROOT/anon/versions" ] || fail "an anonymous failure left versions/ behind"
+  run 0 HARDCHARGER_PREFIX="$ROOT/anon" -- --uninstall
+  [ ! -e "$ROOT/anon" ] || fail "--uninstall left the empty prefix of a failed install"
 fi
 
 step "8. --modify-path (bash), twice: one line"
