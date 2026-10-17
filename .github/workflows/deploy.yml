@@ -34,7 +34,6 @@ env:
 jobs:
   tests:
     uses: ./.github/workflows/test-install.yml
-    secrets: inherit
 
   deploy:
     needs: tests

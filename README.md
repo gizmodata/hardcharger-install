@@ -40,8 +40,8 @@ $env:HARDCHARGER_VERSION = '0.2.0'; irm https://install.hardcharger.gizmodata.co
 Windows builds aren't released yet. Until a release has `hardcharger-windows-<arch>.zip`,
 `install.ps1` says so and exits non-zero.
 
-> 🔐 **While Hardcharger's releases are internal**, the installer needs a GitHub token that can
-> read `gizmodata/hardcharger`. It uses `HARDCHARGER_INSTALL_TOKEN`, then `GH_TOKEN`, then
+> 🔐 **While Hardcharger's releases are internal** (until public launch), the installer needs a
+> GitHub token that can read `gizmodata/hardcharger`. It uses `HARDCHARGER_INSTALL_TOKEN`, then `GH_TOKEN`, then
 > `gh auth token` if the GitHub CLI is signed in, so `gh auth login` is all most people need:
 >
 > ```bash
@@ -106,28 +106,58 @@ installs those as `hardcharger-server`, so that name always means the server.
 
 ## 🧪 Tests
 
-[`test-install.yml`](.github/workflows/test-install.yml) runs both installers end to end against
-the real releases, on every pull request and push, when hardcharger publishes a release
-(`repository_dispatch: hardcharger-released`), and weekly.
+[`test-install.yml`](.github/workflows/test-install.yml) runs on every pull request and push, when
+hardcharger publishes a release (`repository_dispatch: hardcharger-released`), and weekly. Its jobs
+come in two kinds.
+
+**Fixture tests, which gate the deploy.** They need no credentials and no real release.
+[`fake_github.py`](.github/scripts/fake_github.py) serves fixture releases (stand-in tarballs, zips
+and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It runs twice: once
+"internal" (token required) and once "public".
 
 | Job | Where | What |
 |---|---|---|
 | lint | ubuntu-24.04 | shellcheck, `dash -n`, `bash -n`, PSScriptAnalyzer, and the platform checks with a fake `uname`/`getconf`/`ldd` (32-bit Pi, musl, Intel Mac, old glibc, …) |
-| linux-amd64, linux-arm64, macos-arm64 | ubuntu-24.04, ubuntu-24.04-arm, macos-15 | install, start the server and query it, downgrade, switch back without a download, `--list`, a corrupted download, a build that doesn't run, a `SHA256SUMS` without the asset, anonymous downloads, `--modify-path`, `--prefix`, uninstall |
-| debian-13 container | ubuntu-24.04 | the same |
-| glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | the installer explains the glibc gap, before downloading |
-| known failing | the same two | the full suite; fails until the glibc 2.28 builds ship (`continue-on-error`) |
-| windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the "no Windows build yet" message, as a file and through `iex`; install, switch, checksums and uninstall with stand-in builds from a local mirror |
+| fixtures linux-amd64, linux-arm64, macos-arm64 | ubuntu-24.04 (dash and bash), ubuntu-24.04-arm, macos-15 | latest and pinned installs, with a token and anonymously; the token reaching the API but never the storage host; `GH_TOKEN` and `gh auth token`; a downgrade to a pre-0.2.0 layout and a switch back with no download; `--list`; good, corrupted and missing checksums and a wrong GitHub digest; a build that doesn't run; a release with no asset for this platform; API rate-limit fallbacks; `--modify-path`, `--prefix`, every uninstall |
+| fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds are coming" for a release with no zip, both as a file and through `iex` |
+| glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | 0.2.0 is refused with the glibc explanation, before any download |
 
-While hardcharger is internal, the runs read its releases with the `HARDCHARGER_RELEASES_TOKEN`
-secret: a fine-grained token for `gizmodata/hardcharger` alone, with Contents: read-only.
+**The real-release check: `real release, runs at public launch (…)`.** These jobs install the real
+latest release on Linux, macOS, Debian 13, Debian 12, Oracle Linux 8 and Windows, then start the
+server and query it. While hardcharger's releases are internal (an anonymous request to github.com
+gets 404), they post a notice, "releases are internal; real-release check runs at public launch",
+and pass. **That pass is not coverage.** Once the releases are public, the jobs run for real and
+must pass, with no flag to flip. The Debian 12 and Oracle Linux 8 entries are `continue-on-error`
+until the glibc 2.28 builds ship.
 
-Run the suite locally (it uses a throwaway `HOME`):
+Run them locally (each uses a throwaway `HOME`):
 
 ```bash
-HARDCHARGER_INSTALL_TOKEN="$(gh auth token)" SH=dash .github/scripts/scenarios.sh
+.github/scripts/fixture-scenarios.sh                                   # SH=dash or SH=bash to pick the shell
 .github/scripts/platform-tests.sh dash
+HARDCHARGER_INSTALL_TOKEN="$(gh auth token)" .github/scripts/scenarios.sh   # the real-release check
 ```
+
+## 🚦 At public launch
+
+Flips by itself, the moment gizmodata/hardcharger's releases are public:
+
+- Anonymous installs work. No token is needed, and the "while the releases are internal" hints
+  stop appearing, because no request gets the 404 that triggers them.
+- The `real release, runs at public launch` jobs start running for real on the next push or weekly
+  run, and every deploy then also depends on them.
+
+Check by hand:
+
+- [ ] On a machine with no `GH_TOKEN` and gh not signed in, run
+      `curl https://install.hardcharger.gizmodata.com | sh`. It should install the latest release,
+      and `hardcharger-server --version` should run.
+- [ ] Run Deploy (or push to main). Its `real release, runs at public launch` jobs must show the real
+      install steps running, not the "not run" notice.
+- [ ] Windows: once a release has `hardcharger-windows-<arch>.zip`, check that
+      `irm https://install.hardcharger.gizmodata.com/install.ps1 | iex` installs it, and that the
+      Windows real-release job queries the server.
+- [ ] Remove the internal-release wording from this README and from the installers' token hints.
 
 ## 🚀 Deploy
 

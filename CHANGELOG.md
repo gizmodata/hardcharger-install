@@ -7,6 +7,21 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Changed
+
+- The deploy is gated on tests that need no credentials. `fixture-scenarios.sh` and
+  `windows-tests.ps1` run every scenario against fixture releases served by `fake_github.py`, a
+  local stand-in for GitHub's releases API, redirects and downloads, both "internal" (token
+  required) and "public". Together with lint, the platform unit tests and the glibc message, these
+  gate the deploy on Linux, macOS and Windows.
+- The real-release check (`real release, runs at public launch`) runs only once gizmodata/hardcharger's
+  releases are public, detected with an anonymous request to github.com. Until then it posts a
+  notice and passes, and it switches on by itself at launch. The `HARDCHARGER_RELEASES_TOKEN`
+  secret and its job are gone.
+- `install.sh` and `install.ps1` take `HARDCHARGER_INSTALL_GITHUB_API` (and, for `install.sh`,
+  `HARDCHARGER_INSTALL_GITHUB_WEB`) for tests, and allow plain http only when one is set.
+  `--uninstall` also removes the empty prefix that a failed first install leaves.
+
 ## [0.1.0] - 2026-10-17
 
 ### Added

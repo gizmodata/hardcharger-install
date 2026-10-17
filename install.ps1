@@ -37,6 +37,7 @@
     $env:HARDCHARGER_INSTALL_TOKEN  GitHub token that can read gizmodata/hardcharger's releases
                                     (falls back to $env:GH_TOKEN, then `gh auth token`; "none" = anonymous)
     $env:HARDCHARGER_INSTALL_MIRROR directory or URL laid out like the releases (vX.Y.Z\<asset>)
+    $env:HARDCHARGER_INSTALL_GITHUB_API for tests: GitHub's API base URL (default https://api.github.com)
 
 .LINK
     https://github.com/gizmodata/hardcharger-install
@@ -55,7 +56,9 @@ $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest's progress bar is
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Repo = 'gizmodata/hardcharger'
-$Api = "https://api.github.com/repos/$Repo"
+# For tests only: another GitHub API base (fake_github.py); the default is the real one.
+$GhApi = if ($env:HARDCHARGER_INSTALL_GITHUB_API) { $env:HARDCHARGER_INSTALL_GITHUB_API.TrimEnd('/') } else { 'https://api.github.com' }
+$Api = "$GhApi/repos/$Repo"
 $InstallUrl = 'https://install.hardcharger.gizmodata.com'
 # Run as a file, a failure exits non-zero; piped into iex, it throws (exit would close the window).
 $RunAsFile = [bool]$PSCommandPath

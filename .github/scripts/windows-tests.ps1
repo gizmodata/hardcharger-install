@@ -1,12 +1,13 @@
-# Tests of install.ps1 on Windows.
+# Tests of install.ps1 on Windows, with fixtures only (no credentials, no real release):
 #
-# 1. Against the real release: until a release has hardcharger-windows-<arch>.zip, the installer
-#    must say Windows builds are coming and fail, both run as a file and piped into iex. Once a
-#    release has the zip, it must install it, and the server must answer SELECT 42.
-# 2. Against a local mirror of two stand-in builds (tiny .exe files that print a version, compiled
-#    here; Hardcharger has no Windows build to use yet): install, switch, switch back without a
-#    download, -List, a corrupted zip, a build that doesn't run, uninstall one, uninstall all.
+# 2. A local mirror of stand-in builds (tiny .exe files that print a version, compiled here;
+#    Hardcharger has no Windows build yet): install, switch, switch back without a download,
+#    -List, a corrupted zip, a build that doesn't run, the irm | iex form, uninstall one and all.
+# 3. The GitHub API path against fake_github.py: internal releases with and without a token,
+#    latest, SHA256SUMS and GitHub's digest, a release without a Windows zip ("Windows builds are
+#    coming", as a file and through iex), the token kept off the storage host, anonymous public.
 #
+# The real releases are tested by windows-real-release.ps1, from public launch on.
 #   pwsh -File .github/scripts/windows-tests.ps1         (or powershell -File ... for 5.1)
 # Continue: under 5.1 a native command's stderr is an error record, and the installer's own
 # error message must reach the checks below instead of stopping this script.
@@ -37,38 +38,6 @@ $cpu = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager
 $arch = if ($cpu -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $asset = "hardcharger-windows-$arch.zip"
 Write-Host "shell: $shell $($PSVersionTable.PSVersion); arch: $arch"
-
-# ---- 1. the real release --------------------------------------------------------------------
-$prefix = Join-Path $root 'real'
-$r = Invoke-Installer @('-Prefix', $prefix)
-if ($r.Out -match 'Windows builds are coming in a later release') {
-  Check 'real release: no Windows zip -> clear message' ($r.Out -match "has no $asset yet")
-  Check 'real release: no Windows zip -> non-zero exit' ($r.Code -ne 0)
-  Check 'real release: nothing installed' (-not (Test-Path (Join-Path $prefix 'bin')))
-  $iexOut = & $shell -NoProfile -Command "`$env:HARDCHARGER_PREFIX = '$prefix'; Get-Content -Raw '$installer' | Invoke-Expression" 2>&1 | Out-String
-  $iexCode = $LASTEXITCODE
-  Write-Host ($iexOut -replace '(?m)^', '  | ')
-  Check 'irm | iex form: clear message' ($iexOut -match 'Windows builds are coming in a later release')
-  Check 'irm | iex form: non-zero exit' ($iexCode -ne 0)
-} elseif ($r.Code -ne 0) {
-  Check 'real release: installs, or says Windows builds are coming' $false
-} else {
-  Check 'real release: installs' $true
-  $srv = Join-Path $prefix 'bin\hardcharger-server.exe'
-  $pw = "e2e-$PID"
-  $env:HARDCHARGER_ADMIN_PASSWORD = $pw
-  $p = Start-Process -FilePath $srv -ArgumentList @('--host', '127.0.0.1', '--port', '31471', '--health-port', '31472', '--database', ':memory:') -PassThru -WindowStyle Hidden
-  try {
-    $healthy = $false
-    foreach ($i in 1..120) { try { Invoke-RestMethod 'http://127.0.0.1:31472/health' | Out-Null; $healthy = $true; break } catch { Start-Sleep -Milliseconds 500 } }
-    Check 'real release: server healthy' $healthy
-    $tok = (Invoke-RestMethod -Method Post 'http://127.0.0.1:31471/warp/v1/auth/token' -ContentType 'application/json' -Body (@{ grant_type = 'password'; username = 'hardcharger'; password = $pw } | ConvertTo-Json)).access_token
-    $h = @{ Authorization = "Bearer $tok" }
-    $sid = (Invoke-RestMethod -Method Post 'http://127.0.0.1:31471/warp/v1/sessions' -Headers $h -ContentType 'application/json' -Body '{}').session_id
-    $res = Invoke-RestMethod -Method Post "http://127.0.0.1:31471/warp/v1/sessions/$sid/statements" -Headers $h -ContentType 'application/json' -Body '{"sql": "SELECT CASE WHEN 6 * 7 = 42 THEN 42 ELSE error(''wrong'') END"}'
-    Check 'real release: SELECT 42' ($res.state -eq 'succeeded')
-  } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-}
 
 # ---- 2. stand-in builds from a local mirror -----------------------------------------------------
 function New-StandIn([string]$ver, [int]$exitCode) {
@@ -135,6 +104,58 @@ $r = Invoke-Installer @('-Prefix', $prefix, '-Uninstall', '-Version', '9.9.8')
 Check 'uninstall 9.9.8' ($r.Code -eq 0 -and -not (Test-Path (Join-Path $prefix 'versions\9.9.8')) -and (Current) -eq '9.9.9')
 $r = Invoke-Installer @('-Prefix', $prefix, '-Uninstall')
 Check 'uninstall everything' ($r.Code -eq 0 -and -not (Test-Path $prefix) -and (Test-Path (Join-Path $root 'build-9.9.9')))
+
+# ---- 3. the GitHub API path, against a local stand-in for GitHub (fake_github.py) ----------------
+# Fixture releases: v9.9.8 (zip + SHA256SUMS), v9.9.9 (zip, GitHub's digest only; the latest) and
+# v9.9.5 (no Windows zip, as every real release has so far). One server is "internal" (token
+# required), one "public".
+$gh = Join-Path $root 'gh'
+foreach ($v in '9.9.8', '9.9.9') {
+  New-Item -ItemType Directory -Force -Path (Join-Path $gh "v$v") | Out-Null
+  Copy-Item (Join-Path $mirror "v$v\$asset") (Join-Path $gh "v$v\$asset")
+}
+Copy-Item (Join-Path $mirror 'v9.9.8\SHA256SUMS') (Join-Path $gh 'v9.9.8\SHA256SUMS')
+New-Item -ItemType Directory -Force -Path (Join-Path $gh 'v9.9.5') | Out-Null
+Set-Content -Path (Join-Path $gh 'v9.9.5\hardcharger-linux-amd64.tar.gz') -Value 'not windows'
+$token = "fixture-token-$PID-not-a-secret"
+$py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
+$servers = @{}
+foreach ($kind in 'internal', 'public') {
+  $pf = Join-Path $root "$kind.port"
+  $a = @((Join-Path $PSScriptRoot 'fake_github.py'), '--root', $gh, '--port', '0', '--port-file', $pf, '--log', (Join-Path $root "$kind.log"), '--token', $token)
+  if ($kind -eq 'internal') { $a += '--private' }
+  $proc = Start-Process -FilePath $py -ArgumentList $a -PassThru -WindowStyle Hidden
+  foreach ($i in 1..100) { if ((Test-Path $pf) -and (Get-Content $pf -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 100 }
+  $servers[$kind] = @{ Proc = $proc; Api = "http://127.0.0.1:$((Get-Content $pf).Trim())/api" }
+}
+try {
+  $p3 = Join-Path $root 'hc-gh'
+  $int = @{ HARDCHARGER_INSTALL_GITHUB_API = $servers.internal.Api; HARDCHARGER_INSTALL_TOKEN = 'none'; HARDCHARGER_VERSION = '' }
+  $r = Invoke-Installer @('-Prefix', $p3) $int
+  Check 'internal, no token: clear message, non-zero' ($r.Code -ne 0 -and $r.Out -match "couldn't find Hardcharger release 'latest'" -and $r.Out -match 'HARDCHARGER_INSTALL_TOKEN')
+
+  $int.HARDCHARGER_INSTALL_TOKEN = $token
+  $r = Invoke-Installer @('-Prefix', $p3) $int
+  Check 'internal, token: latest installs 9.9.9 (GitHub digest)' ($r.Code -eq 0 -and $r.Out -match 'Installed Hardcharger 9.9.9' -and $r.Out -match "Checksum OK \(GitHub's asset digest\)")
+  $r = Invoke-Installer @('-Prefix', $p3, '-Version', '9.9.8') $int
+  Check 'internal, token: 9.9.8 (SHA256SUMS and digest)' ($r.Code -eq 0 -and $r.Out -match "Checksum OK \(SHA256SUMS and GitHub's asset digest\)")
+  $r = Invoke-Installer @('-Prefix', $p3, '-Version', '9.9.5') $int
+  Check 'no Windows zip: "Windows builds are coming", non-zero' ($r.Code -ne 0 -and $r.Out -match "Windows builds are coming in a later release: Hardcharger 9.9.5 has no $asset yet")
+  $env:HC_T = $token
+  $iexOut = & $shell -NoProfile -Command "`$env:HARDCHARGER_PREFIX = '$p3'; `$env:HARDCHARGER_VERSION = '9.9.5'; `$env:HARDCHARGER_INSTALL_TOKEN = `$env:HC_T; `$env:HARDCHARGER_INSTALL_GITHUB_API = '$($servers.internal.Api)'; Get-Content -Raw '$installer' | Invoke-Expression; 'after-iex'" 2>&1 | Out-String
+  $iexCode = $LASTEXITCODE
+  Remove-Item Env:\HC_T
+  Write-Host ($iexOut -replace '(?m)^', '  | ')
+  Check 'no Windows zip, iex form: message and non-zero' ($iexCode -ne 0 -and $iexOut -match 'Windows builds are coming in a later release' -and $iexOut -notmatch 'after-iex')
+  Check 'the token never appears in the output' (-not ($r.Out.Contains($token)) -and -not ($iexOut.Contains($token)))
+  $log = Get-Content (Join-Path $root 'internal.log')
+  Check 'the token went to the API, never to the storage host' ((@($log | Where-Object { $_ -match '^/api/.* auth=yes$' }).Count -gt 0) -and (@($log | Where-Object { $_ -match '^/storage/' }).Count -gt 0) -and (@($log | Where-Object { $_ -match '^/storage/.* auth=yes$' }).Count -eq 0))
+
+  $r = Invoke-Installer @('-Prefix', (Join-Path $root 'hc-anon')) @{ HARDCHARGER_INSTALL_GITHUB_API = $servers.public.Api; HARDCHARGER_INSTALL_TOKEN = 'none'; HARDCHARGER_VERSION = '' }
+  Check 'public, anonymous: latest installs 9.9.9' ($r.Code -eq 0 -and $r.Out -match 'Installed Hardcharger 9.9.9' -and -not (Get-Content (Join-Path $root 'public.log') | Where-Object { $_ -match 'auth=yes' }))
+} finally {
+  foreach ($s in $servers.Values) { Stop-Process -Id $s.Proc.Id -Force -ErrorAction SilentlyContinue }
+}
 
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 if ($failures) { Write-Host "$failures Windows test(s) failed"; exit 1 }

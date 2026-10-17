@@ -16,7 +16,6 @@ permissions:
 jobs:
   tests:
     uses: ./.github/workflows/test-install.yml
-    secrets: inherit
 
   release:
     needs: tests

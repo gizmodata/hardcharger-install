@@ -1,13 +1,16 @@
 #!/bin/sh
-# End-to-end scenarios for install.sh against the real gizmodata/hardcharger releases:
+# The real-release check: install.sh against the real gizmodata/hardcharger releases, with the
+# server started and queried after each install (fixture-scenarios.sh covers the same ground
+# without credentials and gates the deploy). Run once the releases are public:
 # install, smoke test, downgrade, switch back without a download, --list, a corrupted
 # download, a build that doesn't run, a SHA256SUMS without the asset, anonymous downloads,
 # --modify-path, uninstalling one version, the current one, and everything.
 #
-#   HARDCHARGER_INSTALL_TOKEN=... .github/scripts/scenarios.sh [<version under test>]
+#   [HARDCHARGER_INSTALL_TOKEN=...] .github/scripts/scenarios.sh [<version under test>]
 #
-# The token must read gizmodata/hardcharger's releases while they are internal. It is never
-# printed. Runs in a throwaway HOME. SH picks the shell the installer runs under (default sh).
+# A token (CI passes its GITHUB_TOKEN, against the API's anonymous rate limit) is optional once the
+# releases are public, and needed before. It is never printed. Runs in a throwaway HOME. SH picks
+# the shell the installer runs under (default sh).
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -19,7 +22,6 @@ MIRRORED="0.1.0"   # a release the corrupted-download cases serve from a local m
 PORT="${PORT:-31400}"
 REPO="gizmodata/hardcharger"
 
-[ -n "${HARDCHARGER_INSTALL_TOKEN:-}" ] || { echo "::error::HARDCHARGER_INSTALL_TOKEN is not set (it must read $REPO's releases)"; exit 1; }
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
@@ -55,9 +57,12 @@ case "$(uname -m)" in x86_64|amd64) PLATFORM="$PLATFORM-amd64" ;; *) PLATFORM="$
 ASSET="hardcharger-$PLATFORM.tar.gz"
 
 api() {
-  printf 'Authorization: Bearer %s\n' "$HARDCHARGER_INSTALL_TOKEN" > "$ROOT/hdr"
-  curl -fsSL -H @"$ROOT/hdr" "$@"
-  rm -f "$ROOT/hdr"
+  case "${HARDCHARGER_INSTALL_TOKEN:-none}" in
+    none) curl -fsSL "$@" ;;
+    *) printf 'Authorization: Bearer %s\n' "$HARDCHARGER_INSTALL_TOKEN" > "$ROOT/hdr"
+       curl -fsSL -H @"$ROOT/hdr" "$@"
+       rm -f "$ROOT/hdr" ;;
+  esac
 }
 if [ -z "$UNDER_TEST" ]; then
   UNDER_TEST="$(api "https://api.github.com/repos/$REPO/releases/latest" | tr ',' '\n' \

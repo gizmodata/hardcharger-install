@@ -1,20 +1,21 @@
 name: Test installers
 
-# Runs install.sh and install.ps1 end to end against the real gizmodata/hardcharger releases.
+# Two kinds of tests:
 #
-# Triggers (a quiet repo's schedule is disabled by GitHub after 60 days, so the schedule is only
-# a backstop):
-#   - every pull request and every push (main's pushes run it through deploy.yml, which
-#     publishes only after it passes);
-#   - repository_dispatch `hardcharger-released` from hardcharger's release workflow, with
-#     client_payload.version;
-#   - workflow_call, from deploy.yml (which publishes the installer only if this passes);
-#   - weekly schedule and workflow_dispatch.
+# - Fixture tests (lint, platform unit tests, fixture-scenarios.sh, windows-tests.ps1, the glibc
+#   message). They need no credentials and no real release: fixture releases are served by a
+#   local stand-in for GitHub (fake_github.py), both "internal" (token required) and "public".
+#   These gate the deploy.
+# - The real-release check ("real release, runs at public launch"): install the real latest
+#   gizmodata/hardcharger release and query the server. While the releases are internal (an
+#   anonymous request to github.com gets 404) these jobs say so in a notice and pass; that pass
+#   is NOT coverage. Once the releases are public they run for real and must pass, with no flag
+#   to flip.
 #
-# Token: while hardcharger is internal, its release assets need a token that can read it. A
-# repo's GITHUB_TOKEN can't read another repo, so runs in this repo use the
-# HARDCHARGER_RELEASES_TOKEN secret: a fine-grained token, resource owner gizmodata, repository
-# gizmodata/hardcharger only, Contents: read-only. The token is never printed.
+# Triggers: every pull request and push (main's pushes run this through deploy.yml, which
+# publishes only after it passes), hardcharger's releases (repository_dispatch
+# `hardcharger-released`, client_payload.version), workflow_call (deploy.yml, release.yml), a
+# weekly schedule (a backstop: GitHub disables a quiet repo's schedule after 60 days) and by hand.
 
 on:
   pull_request:
@@ -27,20 +28,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Hardcharger version to test (X.Y.Z). Empty = latest.
+        description: Hardcharger version for the real-release check (X.Y.Z). Empty = latest.
         required: false
         default: ''
         type: string
   workflow_call:
     inputs:
       version:
-        description: Hardcharger version to test (X.Y.Z). Empty = latest.
+        description: Hardcharger version for the real-release check (X.Y.Z). Empty = latest.
         required: false
         default: ''
         type: string
-    secrets:
-      HARDCHARGER_RELEASES_TOKEN:
-        required: false
 
 permissions:
   contents: read
@@ -54,9 +52,9 @@ concurrency:
 
 env:
   HC_VERSION: ${{ inputs.version || github.event.client_payload.version || '' }}
-  HARDCHARGER_INSTALL_TOKEN: ${{ secrets.HARDCHARGER_RELEASES_TOKEN || github.token }}
 
 jobs:
+  # ---- fixture tests: no credentials, gate the deploy ----------------------------------------
   lint:
     name: Lint and platform unit tests
     runs-on: ubuntu-24.04
@@ -66,125 +64,45 @@ jobs:
         run: shellcheck -s sh install.sh .github/scripts/*.sh
       - name: Syntax check with dash and bash
         run: dash -n install.sh && bash -n install.sh
+      - name: fake_github.py compiles
+        run: python3 -m py_compile .github/scripts/fake_github.py
       - name: Platform checks with fake uname/getconf/ldd (dash, bash)
         run: |
           .github/scripts/platform-tests.sh dash
           .github/scripts/platform-tests.sh bash
-      - name: Parse and analyze install.ps1
+      - name: Parse and analyze the PowerShell scripts
         shell: pwsh
         run: |
           $t = $null; $e = $null
-          foreach ($f in 'install.ps1', '.github/scripts/windows-tests.ps1') {
+          foreach ($f in 'install.ps1', '.github/scripts/windows-tests.ps1', '.github/scripts/windows-real-release.ps1') {
             [System.Management.Automation.Language.Parser]::ParseFile("$PWD/$f", [ref]$t, [ref]$e) | Out-Null
             if ($e.Count) { $e; exit 1 }
           }
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
           Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error -EnableExit
-  token:
-    name: Token can read hardcharger's releases
-    runs-on: ubuntu-24.04
+
+  fixtures-unix:
+    name: fixtures ${{ matrix.name }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-amd64 (ubuntu-24.04; dash, bash), runner: ubuntu-24.04, shells: 'dash bash' }
+          - { name: linux-arm64 (ubuntu-24.04-arm; dash), runner: ubuntu-24.04-arm, shells: dash }
+          - { name: macos-arm64 (macos-15; sh), runner: macos-15, shells: sh }
+    runs-on: ${{ matrix.runner }}
     steps:
-      - name: The token can read hardcharger's releases
+      - uses: actions/checkout@v7
+      - name: Every scenario against fixture releases (internal with a token, and public)
         run: |
-          printf 'Authorization: Bearer %s\n' "$HARDCHARGER_INSTALL_TOKEN" > "$RUNNER_TEMP/h"
-          code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$RUNNER_TEMP/h" https://api.github.com/repos/gizmodata/hardcharger/releases/latest)
-          rm -f "$RUNNER_TEMP/h"
-          if [ "$code" != 200 ]; then
-            echo "::error::the token can't read gizmodata/hardcharger's releases (HTTP $code). Set the HARDCHARGER_RELEASES_TOKEN secret: a fine-grained token for gizmodata/hardcharger with Contents: read-only."
-            exit 1
-          fi
+          for s in ${{ matrix.shells }}; do
+            SH="$s" .github/scripts/fixture-scenarios.sh
+          done
 
-  unix:
-    name: ${{ matrix.name }}
-    needs: [lint, token]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: linux-amd64 (ubuntu-24.04, dash), runner: ubuntu-24.04, port: 31400 }
-          - { name: linux-arm64 (ubuntu-24.04-arm, dash), runner: ubuntu-24.04-arm, port: 31420 }
-          - { name: macos-arm64 (macos-15, sh), runner: macos-15, port: 31440 }
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install, smoke test, switch, downgrade, checksums, anonymous, uninstall
-        env:
-          PORT: ${{ matrix.port }}
-          SH: sh
-        run: .github/scripts/scenarios.sh "$HC_VERSION"
-
-  container:
-    name: ${{ matrix.name }}
-    needs: [lint, token]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: debian-13 container (amd64), runner: ubuntu-24.04, image: 'debian:13' }
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.image }}
-    steps:
-      - run: apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
-      - uses: actions/checkout@v7
-      - name: All scenarios
-        env:
-          SH: sh
-        run: .github/scripts/scenarios.sh "$HC_VERSION"
-
-  # Releases up to 0.2.0 were built on Ubuntu 24.04 and need glibc 2.38. The manylinux_2_28
-  # builds (glibc 2.28, OpenSSL linked in) come from hardcharger's branch feature/ci-speed.
-  # Until they ship, these systems can't run Hardcharger, and the installer must say so plainly.
-  glibc-message:
-    name: glibc message (${{ matrix.name }})
-    needs: [lint, token]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: 'debian-12 arm64, Raspberry Pi OS Bookworm base, glibc 2.36', runner: ubuntu-24.04-arm, image: 'debian:12', glibc: '2.36' }
-          - { name: 'oraclelinux-8 amd64, glibc 2.28', runner: ubuntu-24.04, image: 'oraclelinux:8', glibc: '2.28' }
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.image }}
-    steps:
-      - run: command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)
-      - uses: actions/checkout@v7
-      - name: The installer installs, or explains the glibc gap before downloading
-        run: |
-          set +e
-          out="$(HARDCHARGER_VERSION="${HC_VERSION:-latest}" sh install.sh 2>&1)"; code=$?
-          set -e
-          printf '%s\n' "$out"
-          if [ "$code" = 0 ]; then echo "installed: this release runs on glibc ${{ matrix.glibc }}"; exit 0; fi
-          printf '%s\n' "$out" | grep -E "needs glibc >= 2\.[0-9]+, and this system has glibc ${{ matrix.glibc }}\." \
-            || { echo "::error::the installer failed without the glibc explanation"; exit 1; }
-          if printf '%s\n' "$out" | grep -F "Downloading" ; then echo "::error::it downloaded before refusing"; exit 1; fi
-          [ -z "$(ls -A "$HOME/.hardcharger/versions" 2>/dev/null)" ] || { echo "::error::it left a version behind"; exit 1; }
-
-  known-failing:
-    name: known failing until manylinux_2_28 (${{ matrix.name }})
-    needs: [lint, token]
-    # Expected to fail until hardcharger's feature/ci-speed (manylinux_2_28 Linux builds) is
-    # released; the glibc-message job above is the one that must pass meanwhile.
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: debian-12 arm64, runner: ubuntu-24.04-arm, image: 'debian:12' }
-          - { name: oraclelinux-8 amd64, runner: ubuntu-24.04, image: 'oraclelinux:8' }
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.image }}
-    steps:
-      - run: command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)
-      - uses: actions/checkout@v7
-      - name: All scenarios
-        env:
-          SH: sh
-        run: .github/scripts/scenarios.sh "$HC_VERSION"
-
-  windows:
-    name: ${{ matrix.name }}
-    needs: [lint, token]
+  fixtures-windows:
+    name: fixtures ${{ matrix.name }}
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
@@ -196,13 +114,123 @@ jobs:
       - uses: actions/checkout@v7
       - name: PowerShell 7
         shell: pwsh
-        env:
-          HARDCHARGER_VERSION: ${{ env.HC_VERSION }}
         run: ./.github/scripts/windows-tests.ps1
       - name: Windows PowerShell 5.1
         shell: powershell
-        env:
-          HARDCHARGER_VERSION: ${{ env.HC_VERSION }}
         run: |
           .\.github\scripts\windows-tests.ps1
+          exit $LASTEXITCODE
+
+  # Releases up to 0.2.0 were built on Ubuntu 24.04 and need glibc 2.38; the manylinux_2_28 builds
+  # (glibc 2.28) come from hardcharger's branch feature/ci-speed. For a pinned version the
+  # installer checks glibc before any network call, so this needs no release access.
+  glibc-message:
+    name: glibc message (${{ matrix.name }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: 'debian-12 arm64, Raspberry Pi OS Bookworm base, glibc 2.36', runner: ubuntu-24.04-arm, image: 'debian:12', glibc: '2.36' }
+          - { name: 'oraclelinux-8 amd64, glibc 2.28', runner: ubuntu-24.04, image: 'oraclelinux:8', glibc: '2.28' }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - run: command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)
+      - uses: actions/checkout@v7
+      - name: 0.2.0 is refused with the glibc explanation, before any download
+        env:
+          HARDCHARGER_INSTALL_GITHUB_API: http://127.0.0.1:9
+          HARDCHARGER_INSTALL_GITHUB_WEB: http://127.0.0.1:9
+        run: |
+          set +e
+          out="$(HARDCHARGER_VERSION=0.2.0 sh install.sh 2>&1)"; code=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$code" != 0 ] || { echo "::error::0.2.0 installed on glibc ${{ matrix.glibc }}"; exit 1; }
+          printf '%s\n' "$out" | grep -F "Hardcharger 0.2.0 for Linux needs glibc >= 2.38, and this system has glibc ${{ matrix.glibc }}." \
+            || { echo "::error::the installer failed without the glibc explanation"; exit 1; }
+          if printf '%s\n' "$out" | grep -F "Downloading"; then echo "::error::it downloaded before refusing"; exit 1; fi
+
+  # ---- the real-release check: notice-and-pass while internal, real from public launch on --------
+  real-release:
+    name: real release, runs at public launch (${{ matrix.name }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-amd64, runner: ubuntu-24.04, port: 31400 }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, port: 31420 }
+          - { name: macos-arm64, runner: macos-15, port: 31440 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Are gizmodata/hardcharger's releases public?
+        id: vis
+        run: echo "releases=$(.github/scripts/releases-public.sh)" >> "$GITHUB_OUTPUT"
+      - name: Internal releases, so not run
+        if: steps.vis.outputs.releases == 'internal'
+        run: echo "::notice title=Real-release check not run::gizmodata/hardcharger releases are internal; the real-release check runs at public launch."
+      - name: Install the real release, query the server, switch, downgrade, uninstall
+        if: steps.vis.outputs.releases == 'public'
+        env:
+          HARDCHARGER_INSTALL_TOKEN: ${{ github.token }}
+          PORT: ${{ matrix.port }}
+          SH: sh
+        run: .github/scripts/scenarios.sh "$HC_VERSION"
+
+  real-release-container:
+    name: real release, runs at public launch (${{ matrix.name }})
+    needs: lint
+    # The debian-12 and oraclelinux-8 entries are expected to fail until hardcharger's glibc 2.28
+    # (manylinux_2_28) builds ship; glibc-message above is what must pass meanwhile.
+    continue-on-error: ${{ matrix.known_failing }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: debian-13 container amd64, runner: ubuntu-24.04, image: 'debian:13', known_failing: false }
+          - { name: 'debian-12 arm64, known failing until glibc 2.28 builds', runner: ubuntu-24.04-arm, image: 'debian:12', known_failing: true }
+          - { name: 'oraclelinux-8 amd64, known failing until glibc 2.28 builds', runner: ubuntu-24.04, image: 'oraclelinux:8', known_failing: true }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - run: command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)
+      - uses: actions/checkout@v7
+      - name: Are gizmodata/hardcharger's releases public?
+        id: vis
+        run: echo "releases=$(.github/scripts/releases-public.sh)" >> "$GITHUB_OUTPUT"
+      - name: Internal releases, so not run
+        if: steps.vis.outputs.releases == 'internal'
+        run: echo "::notice title=Real-release check not run::gizmodata/hardcharger releases are internal; the real-release check runs at public launch."
+      - name: Install the real release, query the server, switch, downgrade, uninstall
+        if: steps.vis.outputs.releases == 'public'
+        env:
+          HARDCHARGER_INSTALL_TOKEN: ${{ github.token }}
+          SH: sh
+        run: .github/scripts/scenarios.sh "$HC_VERSION"
+
+  real-release-windows:
+    name: real release, runs at public launch (${{ matrix.name }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-amd64, runner: windows-2025 }
+          - { name: windows-arm64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    env:
+      HARDCHARGER_INSTALL_TOKEN: ${{ github.token }}
+      HARDCHARGER_VERSION: ${{ inputs.version || github.event.client_payload.version || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: PowerShell 7
+        shell: pwsh
+        run: ./.github/scripts/windows-real-release.ps1
+      - name: Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          .\.github\scripts\windows-real-release.ps1
           exit $LASTEXITCODE

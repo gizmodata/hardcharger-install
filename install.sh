@@ -26,6 +26,9 @@
 #                              (also GH_TOKEN, then `gh auth token`); "none" downloads anonymously.
 #   HARDCHARGER_INSTALL_MIRROR a directory or URL laid out like the releases
 #                              (<mirror>/vX.Y.Z/<asset>, <mirror>/vX.Y.Z/SHA256SUMS)
+#   HARDCHARGER_INSTALL_GITHUB_API, HARDCHARGER_INSTALL_GITHUB_WEB
+#                              for tests: GitHub's API and web base URLs (default
+#                              https://api.github.com, https://github.com); plain http is allowed only then
 #
 # Source: https://github.com/gizmodata/hardcharger-install
 
@@ -33,7 +36,11 @@ set -eu
 
 REPO="gizmodata/hardcharger"
 INSTALL_URL="https://install.hardcharger.gizmodata.com"
-API="https://api.github.com/repos/${REPO}"
+GH_API="${HARDCHARGER_INSTALL_GITHUB_API:-https://api.github.com}"
+GH_WEB="${HARDCHARGER_INSTALL_GITHUB_WEB:-https://github.com}"
+API="${GH_API%/}/repos/${REPO}"
+PROTO="=https"
+if [ -n "${HARDCHARGER_INSTALL_GITHUB_API:-}${HARDCHARGER_INSTALL_GITHUB_WEB:-}" ]; then PROTO="=http,https"; fi
 
 # Oldest glibc any Hardcharger Linux build supports (manylinux_2_28).
 GLIBC_FLOOR="2.28"
@@ -337,10 +344,10 @@ PROGRESS="-s"
 # curl_api <url> <out>: GitHub API JSON, with the token when there is one.
 curl_api() {
   if [ -n "$AUTH_HDR" ]; then
-    curl -fsSL --proto '=https' --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/vnd.github+json' \
+    curl -fsSL --proto "$PROTO" --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/vnd.github+json' \
       -H 'X-GitHub-Api-Version: 2022-11-28' -o "$2" "$1"
   else
-    curl -fsSL --proto '=https' --retry 3 -H 'Accept: application/vnd.github+json' -o "$2" "$1"
+    curl -fsSL --proto "$PROTO" --retry 3 -H 'Accept: application/vnd.github+json' -o "$2" "$1"
   fi
 }
 
@@ -356,7 +363,7 @@ json_field() {
 asset_info() {
   json_lines "$1" | awk -v want="$2" '
     function val(s) { sub(/^[^:]*:[[:space:]]*"/, "", s); sub(/".*$/, "", s); return s }
-    /^[[:space:]]*"url"[[:space:]]*:[[:space:]]*"https:\/\/api\.github\.com\/repos\/[^"]*\/releases\/assets\/[0-9]+"/ {
+    /^[[:space:]]*"url"[[:space:]]*:[[:space:]]*"[^"]*\/repos\/[^"]*\/releases\/assets\/[0-9]+"/ {
       id = val($0); sub(/.*\//, "", id); name = ""; digest = ""; next }
     id != "" && name == "" && /^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"/ { name = val($0); next }
     id != "" && /^[[:space:]]*"digest"[[:space:]]*:[[:space:]]*"/ { digest = val($0); next }
@@ -385,7 +392,7 @@ resolve_release() {
     fatal "GitHub has no Hardcharger release '$VERSION' that this token can read ($api_url). See https://github.com/$REPO/releases"
   elif [ "$VERSION" = latest ]; then
     # Anonymous and the API refused (rate limit): ask github.com where /releases/latest goes.
-    TAG="$(curl -fsSLI --proto '=https' -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null || true)"
+    TAG="$(curl -fsSLI --proto "$PROTO" -o /dev/null -w '%{url_effective}' "${GH_WEB%/}/$REPO/releases/latest" 2>/dev/null || true)"
     TAG="${TAG##*/}"
   else
     TAG="v$VERSION"
@@ -409,11 +416,11 @@ fetch_asset() {
     [ -n "$RELEASE_JSON" ] || return 1
     ai="$(asset_info "$RELEASE_JSON" "$1")"
     [ -n "$ai" ] || return 1
-    # curl sends a -H Authorization header only to api.github.com, not to the storage host it redirects to.
-    curl -fSL $PROGRESS --proto '=https' --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/octet-stream' \
+    # curl sends a -H Authorization header only to the API host, not to the storage host it redirects to.
+    curl -fSL $PROGRESS --proto "$PROTO" --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/octet-stream' \
       -o "$2" "$API/releases/assets/${ai%% *}"
   else
-    curl -fSL $PROGRESS --proto '=https' --retry 3 -o "$2" "https://github.com/$REPO/releases/download/$TAG/$1" 2>/dev/null
+    curl -fSL $PROGRESS --proto "$PROTO" --retry 3 -o "$2" "${GH_WEB%/}/$REPO/releases/download/$TAG/$1" 2>/dev/null
   fi
 }
 
