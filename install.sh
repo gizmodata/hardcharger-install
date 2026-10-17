@@ -148,7 +148,7 @@ do_list() {
 switch_to() {
   mkdir -p "$BIN"
   for exe in "$VERSIONS/$1/bin"/*; do
-    [ -f "$exe" ] && [ -x "$exe" ] || continue
+    if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then continue; fi
     n="$(basename "$exe")"
     ln -s "../versions/$1/bin/$n" "$BIN/.$n.new.$$"
     mv -f "$BIN/.$n.new.$$" "$BIN/$n"
@@ -263,7 +263,7 @@ detect_libc() {
   for f in /lib/ld-musl-*.so.1; do [ -e "$f" ] && { echo musl; return 0; }; done
   lv="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
   [ -n "$lv" ] || lv="$(ldd --version 2>/dev/null | head -n 1 | awk '{print $NF}')"
-  printf '%s\n' "$lv" | grep -Eq '^[0-9]+\.[0-9]+' && echo "$lv" || echo ""
+  if printf '%s\n' "$lv" | grep -Eq '^[0-9]+\.[0-9]+'; then echo "$lv"; else echo ""; fi
 }
 
 # The glibc a release's Linux build needs, before downloading it. Releases don't
@@ -450,7 +450,7 @@ check_build() {
     fi
   fi
   for exe in "$dir"/bin/*; do
-    [ -f "$exe" ] && [ -x "$exe" ] || continue
+    if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then continue; fi
     if ! out="$("$exe" --version 2>&1)"; then
       echo "  $(basename "$exe") --version failed:" >&2
       printf '%s\n' "$out" | sed 's/^/    /' | head -n 8 >&2
