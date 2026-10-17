@@ -18,8 +18,10 @@ on:
 permissions:
   contents: read
 
+# Queue, never cancel: a deploy cut off between the S3 upload and the invalidation would leave
+# the old script cached.
 concurrency:
-  group: deploy-main
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:

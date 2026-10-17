@@ -45,9 +45,12 @@ on:
 permissions:
   contents: read
 
+# Superseded runs on a branch are cancelled, never a run on a tag. The prefix keeps this group
+# apart from a caller's (deploy.yml, release.yml): a called workflow's github.workflow is the
+# caller's name, and sharing the caller's group would deadlock the run.
 concurrency:
-  group: test-install-${{ github.workflow }}-${{ github.ref }}-${{ inputs.version || github.event.client_payload.version || 'latest' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: test-install-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   HC_VERSION: ${{ inputs.version || github.event.client_payload.version || '' }}
