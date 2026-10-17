@@ -1,0 +1,34 @@
+name: OIDC role check
+
+# By hand: prints this repo's OIDC claims (never the token) and checks that the deploy role
+# trusts them, by assuming it and listing the installer bucket. Use it when the role's trust
+# policy (gizmodata-infrastructure-terraform, aws/dns/hardcharger_install.tf) changes or the
+# repo is renamed or recreated (the `sub` claim carries the repo's ID).
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The token's claims
+        run: |
+          set -eu
+          tok=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "::add-mask::$tok"
+          payload=$(printf '%s' "$tok" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+          printf '%s' "$payload" | base64 -d | jq '{sub, aud, repository, repository_id, ref}'
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::920373031680:role/github-hardcharger-install-deploy
+          aws-region: us-east-2
+      - name: The role can list the installer bucket
+        run: |
+          aws sts get-caller-identity --query Arn --output text
+          aws s3api list-objects-v2 --bucket gizmodata-hardcharger-install --query 'Contents[].[Key,Size,LastModified]' --output text

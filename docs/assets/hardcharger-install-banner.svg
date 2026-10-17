@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="Install Hardcharger by GizmoData in one line: curl https://install.hardcharger.gizmodata.com | sh">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1416"/>
+      <stop offset="1" stop-color="#101f26"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f15a24"/>
+      <stop offset="1" stop-color="#31a8db"/>
+    </linearGradient>
+    <linearGradient id="streak" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f15a24" stop-opacity="0"/>
+      <stop offset="0.7" stop-color="#f15a24" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#31a8db" stop-opacity="0.9"/>
+    </linearGradient>
+    <clipPath id="card"><rect width="1280" height="320" rx="28"/></clipPath>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="1280" height="320" fill="url(#bg)"/>
+    <g transform="skewX(-24)">
+      <rect x="640" y="46" width="720" height="6" rx="3" fill="url(#streak)" opacity="0.55"/>
+      <rect x="820" y="70" width="560" height="3" rx="1.5" fill="url(#streak)" opacity="0.4"/>
+    </g>
+    <text x="72" y="104" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="58" font-weight="800" fill="#ffffff">Hardcharger</text>
+    <text x="72" y="146" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="26" font-weight="500" fill="url(#brand)">one-line installer · by GizmoData</text>
+    <rect x="72" y="186" width="1136" height="76" rx="14" fill="#060c0e" stroke="url(#brand)" stroke-width="2"/>
+    <text x="104" y="234" font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace" font-size="28" fill="#9fb3bb"><tspan fill="#f15a24">$</tspan> <tspan fill="#ffffff">curl https://install.hardcharger.gizmodata.com</tspan> <tspan fill="#31a8db">| sh</tspan></text>
+  </g>
+</svg>

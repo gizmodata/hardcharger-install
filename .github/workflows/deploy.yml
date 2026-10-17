@@ -1,0 +1,109 @@
+name: Deploy
+
+# Every push to main: run the full installer tests, and only if they pass, publish install.sh
+# (served at https://install.hardcharger.gizmodata.com/) and install.ps1 to the S3 bucket behind
+# CloudFront, invalidate the cache, and check the live URLs serve exactly these files.
+#
+# AWS access is GitHub OIDC to a role that trusts only this repo's main branch (the `sub` claim
+# carries the org and repo IDs: repo:gizmodata@181902052/hardcharger-install@1423709869:ref:refs/heads/main)
+# and may only write the bucket and invalidate the distribution. The role, bucket and
+# distribution are in gizmodata-infrastructure-terraform, aws/dns/hardcharger_install.tf.
+# No GitHub `environment:` here: it would change the `sub` claim the role trusts.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  AWS_DEPLOY_ROLE_ARN: arn:aws:iam::920373031680:role/github-hardcharger-install-deploy
+  BUCKET: gizmodata-hardcharger-install
+  DISTRIBUTION_ID: E1RQCZI4UV7Y9O
+  HOST: install.hardcharger.gizmodata.com
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test-install.yml
+    secrets: inherit
+
+  deploy:
+    needs: tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      deployments: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deployment record (in progress)
+        id: deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/deployments" -X POST -f ref="$GITHUB_SHA" -f environment=production \
+            -F auto_merge=false -f 'required_contexts[]' -f description="install.sh and install.ps1 to $HOST" --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" -X POST -f state=in_progress >/dev/null
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: hardcharger-install-${{ github.run_id }}
+
+      - name: Upload install.sh (served at /) and install.ps1
+        run: |
+          for f in install.sh install.ps1; do
+            aws s3 cp "$f" "s3://$BUCKET/$f" --content-type 'text/plain; charset=utf-8' \
+              --cache-control 'public, max-age=300' --metadata "git-sha=$GITHUB_SHA" --only-show-errors
+          done
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" \
+            --paths / /install.sh /install.ps1 --query Invalidation.Id --output text
+
+      # Plain curl with no -L, over https and http, as the documented one-liners run it.
+      - name: The live URLs serve these exact files
+        run: |
+          check() {
+            url="$1"; file="$2"
+            code=$(curl -sS -o "$RUNNER_TEMP/body" -D "$RUNNER_TEMP/headers" -w '%{http_code}' "$url") || return 1
+            [ "$code" = 200 ] || { echo "$url: HTTP $code"; return 1; }
+            grep -qi '^content-type: text/plain' "$RUNNER_TEMP/headers" || { echo "$url: not text/plain"; return 1; }
+            cmp -s "$RUNNER_TEMP/body" "$file" || { echo "$url: not this commit's $file yet"; return 1; }
+            echo "$url: 200, text/plain, matches $file"
+          }
+          for _ in $(seq 1 60); do
+            ok=1
+            for pair in "https://$HOST/ install.sh" "http://$HOST/ install.sh" "https://$HOST/install.sh install.sh" \
+                        "https://$HOST/install.ps1 install.ps1" "http://$HOST/install.ps1 install.ps1"; do
+              # shellcheck disable=SC2086
+              check $pair || ok=0
+            done
+            [ "$ok" = 1 ] && exit 0
+            sleep 10
+          done
+          echo "::error::the live installer didn't match this commit after 10 minutes"
+          exit 1
+
+      - name: The served one-liner runs (--help over a pipe)
+        run: curl -sS "https://$HOST" | sh -s -- --help | grep -F "Hardcharger installer"
+
+      - name: Deployment record (result)
+        if: always() && steps.deployment.outputs.id
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/deployments/${{ steps.deployment.outputs.id }}/statuses" -X POST \
+            -f state="$STATE" -f environment_url="https://$HOST" >/dev/null
