@@ -89,9 +89,18 @@ mkdir -p "$F/v1.0.5"; echo "other" > "$F/v1.0.5/hardcharger-windows-amd64.zip"  
 
 serve() {   # serve <name> [--private]: starts a server, sets <name>_URL
   "$PY" "$HERE/fake_github.py" --root "$F" --port 0 --port-file "$ROOT/$1.port" --log "$ROOT/$1.log" \
-    --token "$TOKEN" ${2:+"$2"} &
-  PIDS="$PIDS $!"
-  i=0; until [ -s "$ROOT/$1.port" ]; do i=$((i + 1)); [ "$i" -lt 100 ] || fail "fake GitHub didn't start"; sleep 0.1; done
+    --token "$TOKEN" ${2:+"$2"} 2>"$ROOT/$1.err" &
+  pid=$!
+  PIDS="$PIDS $pid"
+  i=0
+  until [ -s "$ROOT/$1.port" ]; do
+    i=$((i + 1))
+    if [ "$i" -ge 600 ] || ! kill -0 "$pid" 2>/dev/null; then
+      cat "$ROOT/$1.err" >&2
+      fail "fake GitHub ($1) didn't start ($PY)"
+    fi
+    sleep 0.1
+  done
   eval "$1_URL=http://127.0.0.1:$(cat "$ROOT/$1.port")"
 }
 serve internal --private

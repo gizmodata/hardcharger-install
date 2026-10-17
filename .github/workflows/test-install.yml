@@ -88,9 +88,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-amd64 (ubuntu-24.04; dash, bash), runner: ubuntu-24.04, shells: 'dash bash' }
-          - { name: linux-arm64 (ubuntu-24.04-arm; dash), runner: ubuntu-24.04-arm, shells: dash }
-          - { name: macos-arm64 (macos-15; sh), runner: macos-15, shells: sh }
+          - { name: 'linux-amd64 (ubuntu-24.04; dash, bash)', runner: ubuntu-24.04, shells: 'dash bash' }
+          - { name: 'linux-arm64 (ubuntu-24.04-arm; dash)', runner: ubuntu-24.04-arm, shells: dash }
+          - { name: 'macos-arm64 (macos-15; sh)', runner: macos-15, shells: sh }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
