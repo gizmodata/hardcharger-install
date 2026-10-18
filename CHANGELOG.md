@@ -7,6 +7,11 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Documentation
+
+- Trademark notices: Hardcharger™ and GizmoData™ on the README titles and first mentions, package
+  metadata and the footer, which says both are trademarks of GizmoData LLC.
+
 ### Changed
 
 - The deploy is gated on tests that need no credentials. `fixture-scenarios.sh` and

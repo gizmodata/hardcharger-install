@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://gizmodata.com">
-    <img src="docs/assets/hardcharger-install-banner.svg" alt="Install Hardcharger by GizmoData in one line: curl https://install.hardcharger.gizmodata.com | sh" width="100%">
+    <img src="docs/assets/hardcharger-install-banner.svg" alt="Install Hardcharger™ by GizmoData™ in one line: curl https://install.hardcharger.gizmodata.com | sh" width="100%">
   </a>
 </p>
 
@@ -9,12 +9,12 @@
   <a href="https://github.com/gizmodata/hardcharger-install/actions/workflows/test-install.yml"><img src="https://github.com/gizmodata/hardcharger-install/actions/workflows/test-install.yml/badge.svg" alt="Test installers"></a>
   <a href="https://github.com/gizmodata/hardcharger"><img src="https://img.shields.io/badge/installs-Hardcharger-f15a24.svg" alt="Hardcharger"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-brightgreen.svg" alt="Apache 2.0 license"></a>
-  <a href="https://gizmodata.com"><img src="https://img.shields.io/badge/by-GizmoData-31a8db.svg" alt="GizmoData"></a>
+  <a href="https://gizmodata.com"><img src="https://img.shields.io/badge/by-GizmoData%E2%84%A2-31a8db.svg" alt="GizmoData™"></a>
 </p>
 
 # 🏎️ hardcharger-install
 
-The one-line installer for [Hardcharger](https://github.com/gizmodata/hardcharger), served at
+The one-line installer for [Hardcharger™](https://github.com/gizmodata/hardcharger), served at
 <https://install.hardcharger.gizmodata.com>. It installs `hardcharger-server` and the `hardcharger`
 client, keeps every version you install side by side, and switches between them in seconds.
 
@@ -175,6 +175,8 @@ that distribution. The bucket, distribution, certificate, DNS and role are in
 [Apache 2.0](LICENSE), like Hardcharger.
 
 <p align="center">
-  <a href="https://gizmodata.com"><img src="docs/assets/gizmodata-logo.png" alt="GizmoData" width="56"></a><br>
-  <sub>Built by <a href="https://gizmodata.com">GizmoData</a></sub>
+  <a href="https://gizmodata.com"><img src="docs/assets/gizmodata-logo.png" alt="GizmoData™" width="56"></a><br>
+  <sub>Built by <a href="https://gizmodata.com">GizmoData™</a></sub>
 </p>
+
+<p align="center"><sub>Hardcharger™ and GizmoData™ are trademarks of GizmoData LLC.</sub></p>
