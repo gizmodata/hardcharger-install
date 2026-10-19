@@ -18,9 +18,12 @@ name: Test installers
 # weekly schedule (a backstop: GitHub disables a quiet repo's schedule after 60 days) and by hand.
 
 on:
+  # Documentation-only changes (README, CHANGELOG, docs/assets) don't touch the installers.
   pull_request:
+    paths-ignore: ['**/*.md', 'docs/**']
   push:
     branches-ignore: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
   repository_dispatch:
     types: [hardcharger-released]
   schedule:
