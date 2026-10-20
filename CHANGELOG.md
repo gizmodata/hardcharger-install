@@ -7,6 +7,9 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+<!-- Set the date above at tag time. -->
+
 ### Fixed
 
 - The "Get started" client line that `install.sh` and `install.ps1` print now says `--tls=false`.
