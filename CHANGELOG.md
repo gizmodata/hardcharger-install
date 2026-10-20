@@ -7,10 +7,27 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Fixed
+
+- The "Get started" client line that `install.sh` and `install.ps1` print now says `--tls=false`.
+  The server on the line above runs without TLS by default and the client uses TLS unless told
+  otherwise, so the line as printed failed with "The server at …:31337 speaks plain HTTP, not
+  TLS". Every release with a client (0.3.0 on) accepts `--tls=false` (`--no-tls` is newer than
+  2.0.0-rc.1). The fixture tests now check the printed lines on Linux, macOS and Windows.
+- Messages that said builds were coming: for a release without a Windows zip, `install.ps1` says
+  Windows builds start with 0.3.0; for a pinned release that needs glibc 2.38 on a system with
+  glibc 2.28 or newer, `install.sh` says 0.3.0 and later need only glibc 2.28.
+- The real-release smoke test (`e2e.sh`, which runs from public launch on) connects the client
+  with `--tls=false`, and accepts the Warp SQL error (`execution_error`) that 0.3.0 and
+  2.0.0-rc.1 return for a failing statement. Both checks failed against those releases.
+
 ### Documentation
 
 - Trademark notices: Hardcharger™ and GizmoData™ on the README titles and first mentions, package
   metadata and the footer, which says both are trademarks of GizmoData LLC.
+- README: Windows builds (zip and MSI) ship from 0.3.0 on and are Authenticode-signed from
+  2.0.0-rc.1 on; Linux builds need glibc 2.28 from 0.3.0 on; a "Get started" section with the
+  printed lines; the Windows pin example uses 0.3.0, the first release with a Windows zip.
 
 ### Changed
 

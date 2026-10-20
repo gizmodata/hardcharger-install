@@ -1,6 +1,6 @@
 # The real-release check for install.ps1: install the latest gizmodata/hardcharger release on
-# this Windows machine and query the server, or, until a release has a Windows zip, check that the
-# installer says Windows builds are coming (as a file and through iex).
+# this Windows machine and query the server, or, for a release without a Windows zip (before 0.3.0),
+# check that the installer says Windows builds start with 0.3.0 (as a file and through iex).
 #
 # It runs only once the releases are public. While they are internal (an anonymous request to
 # github.com gets 404), it says so and passes: that pass is NOT coverage of the real releases.
@@ -55,17 +55,17 @@ Write-Host 'gizmodata/hardcharger releases are public: running the real-release 
 # ---- 1. the real release --------------------------------------------------------------------
 $prefix = Join-Path $root 'real'
 $r = Invoke-Installer @('-Prefix', $prefix)
-if ($r.Out -match 'Windows builds are coming in a later release') {
-  Check 'real release: no Windows zip -> clear message' ($r.Out -match "has no $asset yet")
+if ($r.Out -match 'Windows builds start with 0\.3\.0') {
+  Check 'real release: no Windows zip -> clear message' ($r.Out.Contains("has no Windows build ($asset)"))
   Check 'real release: no Windows zip -> non-zero exit' ($r.Code -ne 0)
   Check 'real release: nothing installed' (-not (Test-Path (Join-Path $prefix 'bin')))
   $iexOut = & $shell -NoProfile -Command "`$env:HARDCHARGER_PREFIX = '$prefix'; Get-Content -Raw '$installer' | Invoke-Expression" 2>&1 | Out-String
   $iexCode = $LASTEXITCODE
   Write-Host ($iexOut -replace '(?m)^', '  | ')
-  Check 'irm | iex form: clear message' ($iexOut -match 'Windows builds are coming in a later release')
+  Check 'irm | iex form: clear message' ($iexOut -match 'Windows builds start with 0\.3\.0')
   Check 'irm | iex form: non-zero exit' ($iexCode -ne 0)
 } elseif ($r.Code -ne 0) {
-  Check 'real release: installs, or says Windows builds are coming' $false
+  Check 'real release: installs, or says Windows builds start with 0.3.0' $false
 } else {
   Check 'real release: installs' $true
   $srv = Join-Path $prefix 'bin\hardcharger-server.exe'

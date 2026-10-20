@@ -72,7 +72,7 @@ check "FreeBSD"                             refuse "has no build for FreeBSD"   
 check "Git Bash on Windows"                 refuse "irm https://install.hardcharger.gizmodata.com/install.ps1 | iex" FAKE_S=MINGW64_NT-10.0 FAKE_M=x86_64 $V
 check "Alpine (musl)"                       refuse "uses musl libc (Alpine Linux or similar)" FAKE_S=Linux FAKE_M=x86_64 FAKE_MUSL=1 $V
 check "Debian 12 / Pi OS Bookworm, 0.2.0"   refuse "Hardcharger 0.2.0 for Linux needs glibc >= 2.38, and this system has glibc 2.36" FAKE_S=Linux FAKE_M=aarch64 FAKE_GLIBC=2.36 $V
-check "Oracle Linux 8, 0.2.0"               refuse "needs glibc >= 2.38, and this system has glibc 2.28. Builds for glibc 2.28 and newer" FAKE_S=Linux FAKE_M=x86_64 FAKE_GLIBC=2.28 $V
+check "Oracle Linux 8, 0.2.0"               refuse "needs glibc >= 2.38, and this system has glibc 2.28. Hardcharger 0.3.0 and later need only glibc 2.28" FAKE_S=Linux FAKE_M=x86_64 FAKE_GLIBC=2.28 $V
 check "glibc 2.17, any version"             refuse "Hardcharger supports glibc 2.28 and newer" FAKE_S=Linux FAKE_M=x86_64 FAKE_GLIBC=2.17 HARDCHARGER_VERSION=0.3.0
 check "Debian 12, a manylinux_2_28 release" pass   "Downloading Hardcharger 0.3.0 for linux-arm64" FAKE_S=Linux FAKE_M=aarch64 FAKE_GLIBC=2.36 HARDCHARGER_VERSION=0.3.0
 check "Ubuntu 24.04 arm64, 0.2.0"           pass   "Downloading Hardcharger 0.2.0 for linux-arm64" FAKE_S=Linux FAKE_M=aarch64 FAKE_GLIBC=2.39 $V

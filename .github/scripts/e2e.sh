@@ -56,9 +56,14 @@ out="$(run_sql "SELECT CASE WHEN 6 * 7 = 42 THEN 42 ELSE error('wrong answer') E
 printf '%s\n' "$out" | grep -F '"state":"succeeded"' >/dev/null || fail "SELECT 42 over curl: $out"
 printf '%s\n' "$out" | grep -F '"rows":1' >/dev/null || fail "SELECT 42 over curl returned no row: $out"
 echo "curl: SELECT 42 succeeded"
-out="$(run_sql "SELECT error('expected failure')" 2>&1 || true)"
+# Without -f, so the error body is kept: 0.3.0 and later answer a failed statement with a Warp SQL
+# error (HTTP 500 in 0.3.0, 422 in 2.0.0-rc.1, "code":"execution_error"), not with a statement in
+# state "failed", which this check used to require (that form is still accepted).
+out="$(curl -sS "$W/sessions/$SESSION/statements" -H @"$HDR" -H 'Content-Type: application/json' \
+  -d "{\"sql\": \"SELECT error('expected failure')\"}" 2>&1 || true)"
 case "$out" in
   *'"state":"failed"'*'expected failure'*) ;;
+  *'"code":"execution_error"'*'expected failure'*) ;;
   *) fail "a failing statement did not fail with its own error: $out" ;;
 esac
 echo "curl: a failing statement fails"
@@ -66,7 +71,7 @@ rm -f "$HDR"
 
 if [ -x "$BIN_DIR/hardcharger" ]; then
   got="$(HARDCHARGER_PASSWORD="$PASSWORD" "$BIN_DIR/hardcharger" --host 127.0.0.1 --port "$PORT" \
-    --username hardcharger --csv --command "SELECT 42 AS answer")" || fail "hardcharger client: $got"
+    --tls=false --username hardcharger --csv --command "SELECT 42 AS answer")" || fail "hardcharger client: $got"
   printf '%s\n' "$got"
   printf '%s\n' "$got" | grep -x '42' >/dev/null || fail "hardcharger client did not print 42"
   echo "client: SELECT 42 printed 42"

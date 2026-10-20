@@ -20,7 +20,7 @@ client, keeps every version you install side by side, and switches between them 
 
 ## ⚡ Install
 
-**macOS (Apple silicon) and Linux (x86-64, arm64, glibc)**
+**macOS (Apple silicon) and Linux (x86-64, arm64; glibc 2.28 or newer from 0.3.0 on)**
 
 ```bash
 curl https://install.hardcharger.gizmodata.com | sh                              # latest
@@ -34,11 +34,14 @@ Plain `http://` works too, and neither needs `-L`: the script itself is served a
 
 ```powershell
 irm https://install.hardcharger.gizmodata.com/install.ps1 | iex
-$env:HARDCHARGER_VERSION = '0.2.0'; irm https://install.hardcharger.gizmodata.com/install.ps1 | iex
+$env:HARDCHARGER_VERSION = '0.3.0'; irm https://install.hardcharger.gizmodata.com/install.ps1 | iex
 ```
 
-Windows builds aren't released yet. Until a release has `hardcharger-windows-<arch>.zip`,
-`install.ps1` says so and exits non-zero.
+`install.ps1` installs the release's `hardcharger-windows-amd64.zip` or `-arm64.zip`, which every
+release from 0.3.0 on has. For an older release (no zip) it says Windows builds start with 0.3.0
+and exits non-zero. Those releases also ship an MSI per architecture (`Hardcharger-windows-<arch>.msi`,
+which installs under Program Files); this installer doesn't use it. From 2.0.0-rc.1 on, the MSIs
+and the executables in the zips carry GizmoData's Authenticode signature.
 
 > 🔐 **While Hardcharger's releases are internal** (until public launch), the installer needs a
 > GitHub token that can read `gizmodata/hardcharger`. It uses `HARDCHARGER_INSTALL_TOKEN`, then `GH_TOKEN`, then
@@ -74,6 +77,20 @@ curl https://install.hardcharger.gizmodata.com | sh -s -- --uninstall           
 `install.ps1` takes the same options as `-Version`, `-Prefix`, `-List`, `-Uninstall [-Version v]`
 and `-ModifyPath`.
 
+## 🏁 Get started
+
+After installing, the installer prints how to start a server and connect to it (paths shortened):
+
+```text
+Get started:
+    HARDCHARGER_ADMIN_PASSWORD=change-me ~/.hardcharger/bin/hardcharger-server --database my.duckdb
+    HARDCHARGER_PASSWORD=change-me ~/.hardcharger/bin/hardcharger --tls=false --username hardcharger    # in another terminal
+```
+
+The server runs without TLS unless it is given a certificate (`--tls-cert`, `--tls-key`), and the
+client uses TLS unless told otherwise, so the client line says `--tls=false`. Every release with a
+client (0.3.0 on) accepts it. The client line appears only for versions that ship a client.
+
 ## 🗂️ Layout
 
 ```text
@@ -92,9 +109,10 @@ Put `~/.hardcharger/bin` on your `PATH` (the installer prints the exact line). O
 
 - **The platform, before downloading.** It refuses musl (Alpine), Intel Macs, and 32-bit systems
   (on a Raspberry Pi it tells you to install the 64-bit Raspberry Pi OS). It reads the system's
-  glibc version and compares it with what the release needs: releases up to 0.2.0 need glibc 2.38
-  (a table in `install.sh`, since releases don't publish this yet). Builds for glibc 2.28 (Debian 12,
-  Raspberry Pi OS Bookworm, RHEL/Oracle Linux 8) come in a later release.
+  glibc version and compares it with what the release needs: releases up to 0.2.0 need glibc 2.38,
+  and from 0.3.0 on the Linux builds are built in manylinux_2_28 and need glibc 2.28 (Debian 12,
+  Raspberry Pi OS Bookworm, RHEL/Oracle Linux 8, Ubuntu 20.04). This is a table in `install.sh`,
+  since releases don't publish it.
 - **The download.** It checks the tarball against the release's `SHA256SUMS` when the release
   has one, and against GitHub's own SHA-256 digest of the asset. It refuses a mismatch.
 - **The binaries, before switching.** Every executable must run `--version` (and the build's real
@@ -119,7 +137,7 @@ and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It r
 |---|---|---|
 | lint | ubuntu-24.04 | shellcheck, `dash -n`, `bash -n`, PSScriptAnalyzer, and the platform checks with a fake `uname`/`getconf`/`ldd` (32-bit Pi, musl, Intel Mac, old glibc, …) |
 | fixtures linux-amd64, linux-arm64, macos-arm64 | ubuntu-24.04 (dash and bash), ubuntu-24.04-arm, macos-15 | latest and pinned installs, with a token and anonymously; the token reaching the API but never the storage host; `GH_TOKEN` and `gh auth token`; a downgrade to a pre-0.2.0 layout and a switch back with no download; `--list`; good, corrupted and missing checksums and a wrong GitHub digest; a build that doesn't run; a release with no asset for this platform; API rate-limit fallbacks; `--modify-path`, `--prefix`, every uninstall |
-| fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds are coming" for a release with no zip, both as a file and through `iex` |
+| fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds start with 0.3.0" for a release with no zip, both as a file and through `iex` |
 | glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | 0.2.0 is refused with the glibc explanation, before any download |
 
 **The real-release check: `real release, runs at public launch (…)`.** These jobs install the real
@@ -127,8 +145,9 @@ latest release on Linux, macOS, Debian 13, Debian 12, Oracle Linux 8 and Windows
 server and query it. While hardcharger's releases are internal (an anonymous request to github.com
 gets 404), they post a notice, "releases are internal; real-release check runs at public launch",
 and pass. **That pass is not coverage.** Once the releases are public, the jobs run for real and
-must pass, with no flag to flip. The Debian 12 and Oracle Linux 8 entries are `continue-on-error`
-until the glibc 2.28 builds ship.
+must pass, with no flag to flip. The Debian 12 and Oracle Linux 8 entries are `continue-on-error`:
+the latest release needs only glibc 2.28 (since 0.3.0), but `scenarios.sh` also downgrades to
+0.1.2, which needs glibc 2.38.
 
 Run them locally (each uses a throwaway `HOME`):
 
@@ -154,9 +173,8 @@ Check by hand:
       and `hardcharger-server --version` should run.
 - [ ] Run Deploy (or push to main). Its `real release, runs at public launch` jobs must show the real
       install steps running, not the "not run" notice.
-- [ ] Windows: once a release has `hardcharger-windows-<arch>.zip`, check that
-      `irm https://install.hardcharger.gizmodata.com/install.ps1 | iex` installs it, and that the
-      Windows real-release job queries the server.
+- [ ] Windows: check that `irm https://install.hardcharger.gizmodata.com/install.ps1 | iex`
+      installs the latest release's zip, and that the Windows real-release job queries the server.
 - [ ] Remove the internal-release wording from this README and from the installers' token hints.
 
 ## 🚀 Deploy

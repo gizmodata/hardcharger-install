@@ -4,9 +4,10 @@
 # "internal" (the API and downloads need a token, as gizmodata/hardcharger's do before launch) and
 # one "public" (anonymous). Covered: latest and pinned installs with a token and anonymously,
 # the token going to the API but never to the storage host, GH_TOKEN and `gh auth token`,
-# downgrade, switching back without a download, --list, SHA256SUMS and GitHub's digest (good,
-# corrupted, missing a line, wrong digest, neither published), a build that doesn't run, a release
-# without this platform's asset, an unknown version, --modify-path, --prefix, and every uninstall.
+# downgrade, switching back without a download, the Get started lines, --list, SHA256SUMS and
+# GitHub's digest (good, corrupted, missing a line, wrong digest, neither published), a build that
+# doesn't run, a release without this platform's asset, an unknown version, --modify-path,
+# --prefix, and every uninstall.
 #
 #   .github/scripts/fixture-scenarios.sh            (SH picks the shell the installer runs under)
 set -eu
@@ -126,6 +127,12 @@ is_current 1.1.0
 [ "$("$P/bin/hardcharger" --version)" = "Hardcharger Client 1.1.0" ] || fail "bin/hardcharger isn't 1.1.0's client"
 [ -f "$P/versions/1.1.0/lib/libfixture.txt" ] || fail "lib/ wasn't installed"
 
+step "1a. Get started: the client line turns TLS off, since the server it starts has none"
+# The server runs without TLS by default and the client defaults to TLS: without --tls=false the
+# printed client line fails with "speaks plain HTTP, not TLS".
+expect "HARDCHARGER_ADMIN_PASSWORD=change-me $P/bin/hardcharger-server --database my.duckdb"
+expect "HARDCHARGER_PASSWORD=change-me $P/bin/hardcharger --tls=false --username hardcharger"
+
 step "1b. The token went to the API, never to the storage host"
 grep -q '^/api/.* auth=yes$' "$ROOT/internal.log" || fail "no authorized API request"
 grep -q '^/storage/.*' "$ROOT/internal.log" || fail "nothing was fetched from storage"
@@ -147,7 +154,8 @@ is_current 0.1.9
 [ "$("$P/bin/hardcharger-server" --version)" = "Hardcharger 0.1.9" ] || fail "0.1.9's server isn't bin/hardcharger-server"
 [ ! -e "$P/bin/hardcharger" ] || fail "0.1.9 has no client, but bin/hardcharger is still there"
 [ ! -e "$P/versions/0.1.9/bin/hardcharger" ] || fail "0.1.9's server wasn't renamed"
-expect "HARDCHARGER_PASSWORD=change-me"
+expect "HARDCHARGER_PASSWORD=change-me $P/bin/hardcharger-server --database my.duckdb"
+expect_not "--tls=false"   # no client in 0.1.9, so no client line
 
 step "4. Switch back to 1.1.0: no download, offline, no token"
 # shellcheck disable=SC2086

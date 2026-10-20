@@ -13,10 +13,10 @@
     check of the new binaries leaves the current version as it was.
 
         irm https://install.hardcharger.gizmodata.com/install.ps1 | iex
-        $env:HARDCHARGER_VERSION = '0.2.0'; irm https://install.hardcharger.gizmodata.com/install.ps1 | iex
+        $env:HARDCHARGER_VERSION = '0.3.0'; irm https://install.hardcharger.gizmodata.com/install.ps1 | iex
 
-    Windows builds are not released yet: until a release has hardcharger-windows-<arch>.zip,
-    this script says so and fails.
+    Windows builds (hardcharger-windows-<arch>.zip) start with 0.3.0; for an older release this
+    script says so and fails.
 
 .PARAMETER Version
     latest (the default), X.Y.Z or vX.Y.Z. Also $env:HARDCHARGER_VERSION.
@@ -214,7 +214,7 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
         }
         $a = @($release.assets | Where-Object { $_.name -eq $asset })[0]
         if (-not $a) {
-          Fail "Windows builds are coming in a later release: Hardcharger $ver has no $asset yet. Until then, run Hardcharger in WSL 2 (curl $InstallUrl | sh) or with Docker (docker run -p 31337:31337 -e HARDCHARGER_ADMIN_PASSWORD=change-me gizmodata/hardcharger)."
+          Fail "Hardcharger $ver has no Windows build ($asset); Windows builds start with 0.3.0. Install 0.3.0 or later (the latest is the default), or run Hardcharger in WSL 2 (curl $InstallUrl | sh) or with Docker (docker run -p 31337:31337 -e HARDCHARGER_ADMIN_PASSWORD=change-me gizmodata/hardcharger)."
         }
         $digest = [string]$a.digest
         $dl = @{ 'User-Agent' = 'hardcharger-install'; 'Accept' = 'application/octet-stream' }
@@ -286,7 +286,9 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
   Write-Host 'Get started:'
   Write-Host "    `$env:HARDCHARGER_ADMIN_PASSWORD = 'change-me'; & '$bin\hardcharger-server.exe' --database my.duckdb"
   if (Test-Path -LiteralPath (Join-Path $bin 'hardcharger.exe')) {
-    Write-Host "    `$env:HARDCHARGER_PASSWORD = 'change-me'; & '$bin\hardcharger.exe' --username hardcharger   # in another terminal"
+    # The server above runs without TLS, and the client uses TLS unless told not to. Every release
+    # with a client (0.3.0 on) takes --tls=false (--no-tls is newer than 2.0.0-rc.1).
+    Write-Host "    `$env:HARDCHARGER_PASSWORD = 'change-me'; & '$bin\hardcharger.exe' --tls=false --username hardcharger   # in another terminal"
   }
   Write-Host "Docs: https://github.com/$Repo#readme"
 }

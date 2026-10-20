@@ -295,7 +295,7 @@ glibc_too_old() {
 
 glibc_hint() {
   if version_ge "$SYS_GLIBC" "$GLIBC_FLOOR"; then
-    echo "Builds for glibc $GLIBC_FLOOR and newer (Debian 12 / Raspberry Pi OS Bookworm, RHEL/Oracle Linux 8, Ubuntu 20.04) come in a later release; until then use a newer distribution or the Docker image (gizmodata/hardcharger)."
+    echo "Hardcharger 0.3.0 and later need only glibc $GLIBC_FLOOR (Debian 12 / Raspberry Pi OS Bookworm, RHEL/Oracle Linux 8, Ubuntu 20.04): install the latest release, or pin 0.3.0 or newer."
   else
     echo "Hardcharger supports glibc $GLIBC_FLOOR and newer; on this system use the Docker image (gizmodata/hardcharger)."
   fi
@@ -606,8 +606,10 @@ getting_started() {
   pw=HARDCHARGER_ADMIN_PASSWORD
   case "$(current_version)" in 0.0.*|0.1.*) pw=HARDCHARGER_PASSWORD ;; esac
   printf '    %s%s=change-me %s --database my.duckdb%s\n' "$B" "$pw" "$s" "$N"
+  # The server above runs without TLS, and the client uses TLS unless told not to. Every release
+  # with a client (0.3.0 on) takes --tls=false (--no-tls is newer than 2.0.0-rc.1).
   if [ -e "$BIN/hardcharger" ]; then
-    printf '    %sHARDCHARGER_PASSWORD=change-me %s --username hardcharger%s    %s# in another terminal%s\n' "$B" "$c" "$N" "$D" "$N"
+    printf '    %sHARDCHARGER_PASSWORD=change-me %s --tls=false --username hardcharger%s    %s# in another terminal%s\n' "$B" "$c" "$N" "$D" "$N"
   fi
   printf '\nDocs: https://github.com/%s#readme\n' "$REPO"
 }
