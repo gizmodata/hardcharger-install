@@ -214,7 +214,7 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
         }
         $a = @($release.assets | Where-Object { $_.name -eq $asset })[0]
         if (-not $a) {
-          Fail "Hardcharger $ver has no Windows build ($asset); Windows builds start with 0.3.0. Install 0.3.0 or later (the latest is the default), or run Hardcharger in WSL 2 (curl $InstallUrl | sh) or with Docker (docker run -p 31337:31337 -e HARDCHARGER_ADMIN_PASSWORD=change-me gizmodata/hardcharger)."
+          Fail "Windows builds start with 0.3.0: Hardcharger $ver has no $asset. Install 0.3.0 or later (the latest is the default), or run Hardcharger in WSL 2 (curl $InstallUrl | sh) or with Docker (docker run -p 31337:31337 -e HARDCHARGER_ADMIN_PASSWORD=change-me gizmodata/hardcharger)."
         }
         $digest = [string]$a.digest
         $dl = @{ 'User-Agent' = 'hardcharger-install'; 'Accept' = 'application/octet-stream' }

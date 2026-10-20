@@ -71,7 +71,7 @@ $r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.9') @{ HARDCHARGER_
 Check 'mirror: install 9.9.9' ($r.Code -eq 0 -and $r.Out -match 'Checksum OK \(SHA256SUMS\)' -and (Current) -eq '9.9.9')
 $v = try { & (Join-Path $bin 'hardcharger-server.exe') --version } catch { "$_" }
 Check 'mirror: bin\hardcharger-server.exe runs 9.9.9' ($v -eq 'Hardcharger 9.9.9')
-# The server runs without TLS by default and the client defaults to TLS, so the client line needs --tls=false.
+# The server runs without TLS by default and the client defaults to TLS: the client line needs --tls=false.
 Check 'Get started: the client line connects without TLS (--tls=false)' ($r.Out.Contains("\hardcharger.exe' --tls=false --username hardcharger"))
 $r = Invoke-Installer @('-Prefix', $prefix, '-Version', 'v9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = $mirror }
 Check 'mirror: downgrade to 9.9.8' ($r.Code -eq 0 -and $r.Out -match 'Installed Hardcharger 9.9.8' -and $r.Out -match '\(was 9.9.9\)' -and (Current) -eq '9.9.8')
@@ -143,7 +143,7 @@ try {
   $r = Invoke-Installer @('-Prefix', $p3, '-Version', '9.9.8') $int
   Check 'internal, token: 9.9.8 (SHA256SUMS and digest)' ($r.Code -eq 0 -and $r.Out -match "Checksum OK \(SHA256SUMS and GitHub's asset digest\)")
   $r = Invoke-Installer @('-Prefix', $p3, '-Version', '9.9.5') $int
-  Check 'no Windows zip: "Windows builds start with 0.3.0", non-zero' ($r.Code -ne 0 -and $r.Out.Contains("Hardcharger 9.9.5 has no Windows build ($asset); Windows builds start with 0.3.0"))
+  Check 'no Windows zip: "Windows builds start with 0.3.0", non-zero' ($r.Code -ne 0 -and $r.Out.Contains("Windows builds start with 0.3.0: Hardcharger 9.9.5 has no $asset."))
   $env:HC_T = $token
   $iexOut = & $shell -NoProfile -Command "`$env:HARDCHARGER_PREFIX = '$p3'; `$env:HARDCHARGER_VERSION = '9.9.5'; `$env:HARDCHARGER_INSTALL_TOKEN = `$env:HC_T; `$env:HARDCHARGER_INSTALL_GITHUB_API = '$($servers.internal.Api)'; Get-Content -Raw '$installer' | Invoke-Expression; 'after-iex'" 2>&1 | Out-String
   $iexCode = $LASTEXITCODE

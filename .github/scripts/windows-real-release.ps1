@@ -56,7 +56,7 @@ Write-Host 'gizmodata/hardcharger releases are public: running the real-release 
 $prefix = Join-Path $root 'real'
 $r = Invoke-Installer @('-Prefix', $prefix)
 if ($r.Out -match 'Windows builds start with 0\.3\.0') {
-  Check 'real release: no Windows zip -> clear message' ($r.Out.Contains("has no Windows build ($asset)"))
+  Check 'real release: no Windows zip -> clear message' ($r.Out.Contains("has no $asset."))
   Check 'real release: no Windows zip -> non-zero exit' ($r.Code -ne 0)
   Check 'real release: nothing installed' (-not (Test-Path (Join-Path $prefix 'bin')))
   $iexOut = & $shell -NoProfile -Command "`$env:HARDCHARGER_PREFIX = '$prefix'; Get-Content -Raw '$installer' | Invoke-Expression" 2>&1 | Out-String
