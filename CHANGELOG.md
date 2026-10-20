@@ -23,6 +23,8 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ### Documentation
 
+- The README banner is the new Hardcharger™ logo, the bull mascot lockup in a light and a dark
+  version that follows the reader's color scheme, in place of the GizmoData banner card.
 - Trademark notices: Hardcharger™ and GizmoData™ on the README titles and first mentions, package
   metadata and the footer, which says both are trademarks of GizmoData LLC.
 - README: Windows builds (zip and MSI) ship from 0.3.0 on and are Authenticode-signed from
@@ -31,6 +33,8 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ### Changed
 
+- The installer tests skip pushes and pull requests that change only documentation (`**/*.md`,
+  `docs/**`); the deploy still runs them in full.
 - The deploy is gated on tests that need no credentials. `fixture-scenarios.sh` and
   `windows-tests.ps1` run every scenario against fixture releases served by `fake_github.py`, a
   local stand-in for GitHub's releases API, redirects and downloads, both "internal" (token
