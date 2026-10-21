@@ -7,10 +7,12 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-20
-<!-- Set the date above at tag time. -->
+## [0.2.0] - 2026-10-21
 
 ### Fixed
+
+- Real-release checks use 0.3.0 for downgrade and mirror scenarios so they also run on glibc 2.28.
+  The anonymous check installs the version under test, and older Linux containers must pass.
 
 - The "Get started" client line that `install.sh` and `install.ps1` print now says `--tls=false`.
   The server on the line above runs without TLS by default and the client uses TLS unless told

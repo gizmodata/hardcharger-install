@@ -17,8 +17,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$(cd "$HERE/../.." && pwd)/install.sh"
 SH="${SH:-sh}"
 UNDER_TEST="${1:-}"
-OLD="0.1.2"        # an older release to downgrade to and switch back from
-MIRRORED="0.1.0"   # a release the corrupted-download cases serve from a local mirror
+OLD="0.3.0"        # the first release supporting glibc 2.28, for downgrade/switch checks
+MIRRORED="$OLD"   # use a build supported on every platform in the real-release matrix
 PORT="${PORT:-31400}"
 REPO="gizmodata/hardcharger"
 
@@ -97,7 +97,7 @@ expect "Downloading Hardcharger $OLD"
 expect "Installed Hardcharger $OLD"
 expect "(was $UNDER_TEST)"
 is_current "$OLD"
-[ ! -e "$P/bin/hardcharger" ] || fail "$OLD has no client, but bin/hardcharger is still there"
+[ -x "$P/bin/hardcharger" ] || fail "$OLD includes the client, but bin/hardcharger is missing"
 "$HERE/e2e.sh" "$P/bin" "$((PORT + 2))" "$OLD"
 
 step "4. Switch back to $UNDER_TEST: no download, and offline"
@@ -113,6 +113,11 @@ expect "* $UNDER_TEST (current)"
 expect "    $OLD"
 
 # ---------------------------------------------------------------------------------------------
+# Remove the older build before mirroring it: an already-installed version would take
+# the offline switch path instead of checking the downloaded bytes.
+run 0 -- --uninstall "$OLD"
+is_current "$UNDER_TEST"
+
 step "6. A corrupted download is refused, and $UNDER_TEST stays current"
 M="$ROOT/mirror"; mkdir -p "$M/v$MIRRORED"
 # shellcheck disable=SC2020 # two characters to two newlines
@@ -162,19 +167,24 @@ expect "Hardcharger 9.9.9 doesn't run on this system, so it wasn't installed; $U
 is_current "$UNDER_TEST"
 [ ! -e "$P/versions/9.9.9" ] || fail "a build that doesn't run was kept"
 
+# Restore the older installation for the later uninstall-one-version checks.
+run 0 HARDCHARGER_VERSION="$OLD" --
+run 0 HARDCHARGER_VERSION="$UNDER_TEST" --
+is_current "$UNDER_TEST"
+
 # ---------------------------------------------------------------------------------------------
 step "7. Anonymous (no token)"
 if curl -fsS -o /dev/null "https://github.com/$REPO/releases/latest" 2>/dev/null; then
   echo "releases are public: anonymous downloads must work"
-  run 0 HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$OLD" --
-  expect "Installed Hardcharger $OLD"
-  "$HERE/e2e.sh" "$ROOT/anon/bin" "$((PORT + 6))" "$OLD"
+  run 0 HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$UNDER_TEST" --
+  expect "Installed Hardcharger $UNDER_TEST"
+  "$HERE/e2e.sh" "$ROOT/anon/bin" "$((PORT + 6))" "$UNDER_TEST"
 else
   echo "releases are internal: anonymous downloads must fail with a clear message"
   run nonzero HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" --
   expect "set HARDCHARGER_INSTALL_TOKEN to a GitHub token that can read $REPO"
-  run nonzero HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$OLD" --
-  expect "Hardcharger $OLD has no $ASSET to download"
+  run nonzero HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$UNDER_TEST" --
+  expect "Hardcharger $UNDER_TEST has no $ASSET to download"
   expect "set HARDCHARGER_INSTALL_TOKEN"
   [ ! -e "$ROOT/anon/versions" ] || fail "an anonymous failure left versions/ behind"
   run 0 HARDCHARGER_PREFIX="$ROOT/anon" -- --uninstall

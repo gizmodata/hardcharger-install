@@ -186,16 +186,14 @@ jobs:
   real-release-container:
     name: real release, runs at public launch (${{ matrix.name }})
     needs: lint
-    # The debian-12 and oraclelinux-8 entries are expected to fail until hardcharger's glibc 2.28
-    # (manylinux_2_28) builds ship; glibc-message above is what must pass meanwhile.
-    continue-on-error: ${{ matrix.known_failing }}
+    # All supported glibc platforms must pass the published-release walkthrough.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: debian-13 container amd64, runner: ubuntu-24.04, image: 'debian:13', known_failing: false }
-          - { name: 'debian-12 arm64, known failing until glibc 2.28 builds', runner: ubuntu-24.04-arm, image: 'debian:12', known_failing: true }
-          - { name: 'oraclelinux-8 amd64, known failing until glibc 2.28 builds', runner: ubuntu-24.04, image: 'oraclelinux:8', known_failing: true }
+          - { name: debian-13 container amd64, runner: ubuntu-24.04, image: 'debian:13' }
+          - { name: 'debian-12 arm64, glibc 2.36', runner: ubuntu-24.04-arm, image: 'debian:12' }
+          - { name: 'oraclelinux-8 amd64, glibc 2.28', runner: ubuntu-24.04, image: 'oraclelinux:8' }
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:
