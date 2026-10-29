@@ -1,6 +1,6 @@
 #!/bin/sh
 # Smoke test of an installed Hardcharger: start hardcharger-server, sign in, run SELECT 42 over
-# Warp SQL (with curl, and with the hardcharger client when the version ships one), check that a
+# Chargewire (with curl, and with the hardcharger client when the version ships one), check that a
 # failing statement fails, stop the server.
 #
 #   .github/scripts/e2e.sh <bin-dir> <port> [<expected-version>]
@@ -36,7 +36,27 @@ until curl -fsS "http://127.0.0.1:$HEALTH_PORT/health" >/dev/null 2>&1; do
 done
 echo "server healthy on 127.0.0.1:$PORT"
 
-W="http://127.0.0.1:$PORT/warp/v1"
+# Discovery: a renamed server answers at /chargewire; a release up to 2.2.0 answers 404 there and
+# serves the protocol under its pre-rename root (pre-rename-protocol.env).
+# shellcheck source=/dev/null # plain KEY=value lines
+. "$(dirname "$0")/pre-rename-protocol.env"
+B="http://127.0.0.1:$PORT"
+DISCOVERY="$(mktemp)"
+code="$(curl -sS -o "$DISCOVERY" -w '%{http_code}' "$B/chargewire")" || fail "discovery at /chargewire"
+case "$code" in
+  200) ROOT=/chargewire PROTOCOL=chargewire ;;
+  404)
+    ROOT="$PRE_RENAME_ROOT" PROTOCOL="$PRE_RENAME_PROTOCOL"
+    code="$(curl -sS -o "$DISCOVERY" -w '%{http_code}' "$B$ROOT")" || fail "discovery at $ROOT"
+    [ "$code" = 200 ] || fail "discovery: 404 at /chargewire, then HTTP $code at $ROOT"
+    ;;
+  *) fail "discovery at /chargewire: HTTP $code: $(cat "$DISCOVERY")" ;;
+esac
+grep -E "\"protocol\" *: *\"$PROTOCOL\"" "$DISCOVERY" >/dev/null \
+  || fail "discovery at $ROOT does not announce $PROTOCOL: $(cat "$DISCOVERY")"
+rm -f "$DISCOVERY"
+echo "discovery: $PROTOCOL at $ROOT"
+W="$B$ROOT/v1"
 TOKEN="$(curl -fsS "$W/auth/token" -H 'Content-Type: application/json' \
   -d "{\"grant_type\": \"password\", \"username\": \"hardcharger\", \"password\": \"$PASSWORD\"}" \
   | sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p')"
@@ -56,7 +76,7 @@ out="$(run_sql "SELECT CASE WHEN 6 * 7 = 42 THEN 42 ELSE error('wrong answer') E
 printf '%s\n' "$out" | grep -F '"state":"succeeded"' >/dev/null || fail "SELECT 42 over curl: $out"
 printf '%s\n' "$out" | grep -F '"rows":1' >/dev/null || fail "SELECT 42 over curl returned no row: $out"
 echo "curl: SELECT 42 succeeded"
-# Without -f, so the error body is kept: 0.3.0 and later answer a failed statement with a Warp SQL
+# Without -f, so the error body is kept: 0.3.0 and later answer a failed statement with a Chargewire
 # error (HTTP 500 in 0.3.0, 422 in 2.0.0-rc.1, "code":"execution_error"), not with a statement in
 # state "failed", which this check used to require (that form is still accepted).
 out="$(curl -sS "$W/sessions/$SESSION/statements" -H @"$HDR" -H 'Content-Type: application/json' \

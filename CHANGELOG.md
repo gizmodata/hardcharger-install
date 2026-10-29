@@ -7,6 +7,12 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Changed
+
+- The real-release smoke tests (`e2e.sh` and `windows-real-release.ps1`) use the Chargewire
+  protocol at `/chargewire/v1`. They still check releases from before the rename (2.2.0 and
+  earlier): when discovery at `/chargewire` answers 404, they use the path those releases serve.
+
 ## [0.2.0] - 2026-10-21
 
 ### Fixed
@@ -23,7 +29,7 @@ All notable changes to the Hardcharger installer are documented here. The format
   "Windows builds start with 0.3.0: …"; for a pinned release that needs glibc 2.38 on a system with
   glibc 2.28 or newer, `install.sh` says 0.3.0 and later need only glibc 2.28.
 - The real-release smoke test (`e2e.sh`, which runs from public launch on) connects the client
-  with `--tls=false`, and accepts the Warp SQL error (`execution_error`) that 0.3.0 and
+  with `--tls=false`, and accepts the Chargewire error (`execution_error`) that 0.3.0 and
   2.0.0-rc.1 return for a failing statement. Both checks failed against those releases.
 
 ### Documentation

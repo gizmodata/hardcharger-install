@@ -76,10 +76,25 @@ if ($r.Out -match 'Windows builds start with 0\.3\.0') {
     $healthy = $false
     foreach ($i in 1..120) { try { Invoke-RestMethod 'http://127.0.0.1:31472/health' | Out-Null; $healthy = $true; break } catch { Start-Sleep -Milliseconds 500 } }
     Check 'real release: server healthy' $healthy
-    $tok = (Invoke-RestMethod -Method Post 'http://127.0.0.1:31471/warp/v1/auth/token' -ContentType 'application/json' -Body (@{ grant_type = 'password'; username = 'hardcharger'; password = $pw } | ConvertTo-Json)).access_token
+    # Discovery: a renamed server answers at /chargewire; a release up to 2.2.0 answers 404 there
+    # and serves the protocol under its pre-rename root (pre-rename-protocol.env).
+    $b = 'http://127.0.0.1:31471'
+    $apiRoot = '/chargewire'; $protocol = 'chargewire'
+    try { $d = Invoke-RestMethod "$b$apiRoot" } catch {
+      if (-not $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) { throw }
+      $preRename = @{}
+      foreach ($line in Get-Content (Join-Path $PSScriptRoot 'pre-rename-protocol.env')) {
+        if ($line -match '^([A-Z_]+)=(.*)$') { $preRename[$Matches[1]] = $Matches[2] }
+      }
+      $apiRoot = $preRename['PRE_RENAME_ROOT']; $protocol = $preRename['PRE_RENAME_PROTOCOL']
+      $d = Invoke-RestMethod "$b$apiRoot"
+    }
+    Check "real release: discovery announces $protocol at $apiRoot" ($d.protocol -eq $protocol)
+    $w = "$b$apiRoot/v1"
+    $tok = (Invoke-RestMethod -Method Post "$w/auth/token" -ContentType 'application/json' -Body (@{ grant_type = 'password'; username = 'hardcharger'; password = $pw } | ConvertTo-Json)).access_token
     $h = @{ Authorization = "Bearer $tok" }
-    $sid = (Invoke-RestMethod -Method Post 'http://127.0.0.1:31471/warp/v1/sessions' -Headers $h -ContentType 'application/json' -Body '{}').session_id
-    $res = Invoke-RestMethod -Method Post "http://127.0.0.1:31471/warp/v1/sessions/$sid/statements" -Headers $h -ContentType 'application/json' -Body '{"sql": "SELECT CASE WHEN 6 * 7 = 42 THEN 42 ELSE error(''wrong'') END"}'
+    $sid = (Invoke-RestMethod -Method Post "$w/sessions" -Headers $h -ContentType 'application/json' -Body '{}').session_id
+    $res = Invoke-RestMethod -Method Post "$w/sessions/$sid/statements" -Headers $h -ContentType 'application/json' -Body '{"sql": "SELECT CASE WHEN 6 * 7 = 42 THEN 42 ELSE error(''wrong'') END"}'
     Check 'real release: SELECT 42' ($res.state -eq 'succeeded')
   } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 }
