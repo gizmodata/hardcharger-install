@@ -172,8 +172,9 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
     $url = if ($want -eq 'latest') { "$Api/releases/latest" } else { "$Api/releases/tags/v$want" }
     try { $release = Invoke-RestMethod -Uri $url -Headers $headers -UseBasicParsing }
     catch {
-      $hint = if ($headers.ContainsKey('Authorization')) { 'this token can''t read it' } else {
-        'while the releases are internal, set $env:HARDCHARGER_INSTALL_TOKEN to a GitHub token that can read ' + $Repo + ' (or sign in with `gh auth login`)' }
+      $hint = if ($headers.ContainsKey('Authorization')) { 'this token can''t read it' }
+        elseif ($want -eq 'latest') { 'its API did not answer; anonymous requests are rate-limited per address, and a GitHub token in $env:HARDCHARGER_INSTALL_TOKEN (or `gh auth login`) gets past that' }
+        else { 'there is no such release, or its API is rate-limiting this address; a GitHub token in $env:HARDCHARGER_INSTALL_TOKEN (or `gh auth login`) gets past the rate limit' }
       Fail "couldn't find Hardcharger release '$want' on GitHub ($hint). See https://github.com/$Repo/releases"
     }
     $ver = Get-NormalVersion $release.tag_name

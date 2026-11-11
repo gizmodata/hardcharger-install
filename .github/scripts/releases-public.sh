@@ -1,9 +1,10 @@
 #!/bin/sh
 # Prints "public" or "internal" for gizmodata/hardcharger's releases, by an anonymous request to
-# github.com (not the rate-limited API): 200 is public, 404 internal. Anything else exits 1, so
-# a GitHub hiccup can't pass as "internal".
+# github.com (not the rate-limited API): 200 is public, 404 internal. Anything else exits 1 (after
+# curl's retries of a 5xx or a timeout), so a GitHub hiccup can't pass as either. The releases are
+# public: the real-release jobs fail on "internal" rather than skip.
 set -eu
-code="$(curl -sIL -o /dev/null -w '%{http_code}' https://github.com/gizmodata/hardcharger/releases/latest || true)"
+code="$(curl -sIL --retry 4 --retry-delay 3 -o /dev/null -w '%{http_code}' https://github.com/gizmodata/hardcharger/releases/latest || true)"
 case "$code" in
   200) echo public ;;
   404) echo internal ;;
