@@ -46,16 +46,23 @@ and exits non-zero. Those releases also ship an MSI per architecture (`Hardcharg
 which installs under Program Files); this installer doesn't use it. From 2.0.0-rc.1 on, the MSIs
 and the executables in the zips carry GizmoData's Authenticode signature.
 
-> 🔐 **While Hardcharger's releases are internal** (until public launch), the installer needs a
-> GitHub token that can read `gizmodata/hardcharger`. It uses `HARDCHARGER_INSTALL_TOKEN`, then `GH_TOKEN`, then
-> `gh auth token` if the GitHub CLI is signed in, so `gh auth login` is all most people need:
->
-> ```bash
-> curl https://install.hardcharger.gizmodata.com | HARDCHARGER_INSTALL_TOKEN="$(gh auth token)" sh
-> ```
->
-> The token is handed to `curl` in a file and is never printed or put on a command line. Once the
-> releases are public, no token is needed.
+Hardcharger's releases are public, so the installer needs no account and no token. When a GitHub
+token is at hand (`HARDCHARGER_INSTALL_TOKEN`, then `GH_TOKEN`, then `gh auth token` if the GitHub
+CLI is signed in) it sends it with its GitHub API requests, which have a low anonymous rate limit
+per address. The token is handed to `curl` in a file, is never printed or put on a command line,
+and never goes to the host the downloads come from. `HARDCHARGER_INSTALL_TOKEN=none` sends none.
+
+**Homebrew.** On macOS and Linux, [GizmoData's tap](https://github.com/gizmodata/homebrew-tap) has
+the same server and client, for people who would rather `brew upgrade` than pick versions:
+
+```bash
+brew install gizmodata/tap/hardcharger                  # hardcharger-server and the hardcharger CLI
+brew install --cask gizmodata/tap/hardcharger-desktop   # the desktop app (macOS)
+```
+
+Homebrew keeps one version, the latest release; this installer keeps every version you install and
+switches between them. If you use both, the directory that comes first in your `PATH` decides
+which `hardcharger` runs.
 
 ## 🔀 Switch, list, uninstall
 
@@ -74,7 +81,7 @@ curl https://install.hardcharger.gizmodata.com | sh -s -- --uninstall           
 | `--list` | | installed versions, the current one starred |
 | `--uninstall [<v>]` | | remove one version, or the whole prefix |
 | `--modify-path` | | add `<prefix>/bin` to your shell's startup file (otherwise the line is only printed) |
-| | `HARDCHARGER_INSTALL_TOKEN` | GitHub token; `none` downloads anonymously |
+| | `HARDCHARGER_INSTALL_TOKEN` | optional GitHub token for the API requests (default: `GH_TOKEN`, then `gh auth token`); `none` sends no token |
 | | `HARDCHARGER_INSTALL_MIRROR` | a directory or URL laid out like the releases (`vX.Y.Z/<asset>`, `vX.Y.Z/SHA256SUMS`) |
 
 `install.ps1` takes the same options as `-Version`, `-Prefix`, `-List`, `-Uninstall [-Version v]`
@@ -134,7 +141,8 @@ come in two kinds.
 **Fixture tests, which gate the deploy.** They need no credentials and no real release.
 [`fake_github.py`](.github/scripts/fake_github.py) serves fixture releases (stand-in tarballs, zips
 and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It runs twice: once
-"internal" (token required) and once "public".
+"internal" (releases only a token can read, as Hardcharger's were before its launch) and once
+"public".
 
 | Job | Where | What |
 |---|---|---|
@@ -143,42 +151,23 @@ and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It r
 | fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds start with 0.3.0" for a release with no zip, both as a file and through `iex` |
 | glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | 0.2.0 is refused with the glibc explanation, before any download |
 
-**The real-release check: `real release, runs at public launch (…)`.** These jobs install the real
-latest release on Linux, macOS, Debian 13, Debian 12, Oracle Linux 8 and Windows, then start the
-server and query it. While hardcharger's releases are internal (an anonymous request to github.com
-gets 404), they post a notice, "releases are internal; real-release check runs at public launch",
-and pass. **That pass is not coverage.** Once the releases are public, the jobs run for real and
-must pass, with no flag to flip. The Debian 12 and Oracle Linux 8 entries are `continue-on-error`:
-the latest release needs only glibc 2.28 (since 0.3.0), but `scenarios.sh` also downgrades to
-0.1.2, which needs glibc 2.38.
+**The real-release check: `real release, runs at public launch (…)`** (the jobs keep the name they
+had before the launch). They install the real latest release on Linux, macOS, Debian 13, Debian 12,
+Oracle Linux 8 and Windows, then start the server and query it, and every deploy depends on them.
+Each job first asks whether gizmodata/hardcharger's releases can be read anonymously
+([`releases-public.sh`](.github/scripts/releases-public.sh)); they can, so the jobs run for real
+and must pass. (Were the releases ever private again, the jobs would post a "not run" notice and
+pass. **That pass would not be coverage.**) The Debian 12 and Oracle Linux 8 entries are
+`continue-on-error`: the latest release needs only glibc 2.28 (since 0.3.0), but `scenarios.sh`
+also downgrades to 0.1.2, which needs glibc 2.38.
 
 Run them locally (each uses a throwaway `HOME`):
 
 ```bash
 .github/scripts/fixture-scenarios.sh                                   # SH=dash or SH=bash to pick the shell
 .github/scripts/platform-tests.sh dash
-HARDCHARGER_INSTALL_TOKEN="$(gh auth token)" .github/scripts/scenarios.sh   # the real-release check
+.github/scripts/scenarios.sh                                           # the real-release check
 ```
-
-## 🚦 At public launch
-
-Flips by itself, the moment gizmodata/hardcharger's releases are public:
-
-- Anonymous installs work. No token is needed, and the "while the releases are internal" hints
-  stop appearing, because no request gets the 404 that triggers them.
-- The `real release, runs at public launch` jobs start running for real on the next push or weekly
-  run, and every deploy then also depends on them.
-
-Check by hand:
-
-- [ ] On a machine with no `GH_TOKEN` and gh not signed in, run
-      `curl https://install.hardcharger.gizmodata.com | sh`. It should install the latest release,
-      and `hardcharger-server --version` should run.
-- [ ] Run Deploy (or push to main). Its `real release, runs at public launch` jobs must show the real
-      install steps running, not the "not run" notice.
-- [ ] Windows: check that `irm https://install.hardcharger.gizmodata.com/install.ps1 | iex`
-      installs the latest release's zip, and that the Windows real-release job queries the server.
-- [ ] Remove the internal-release wording from this README and from the installers' token hints.
 
 ## 🚀 Deploy
 
