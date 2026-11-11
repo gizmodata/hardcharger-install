@@ -2,8 +2,8 @@
 # this Windows machine and query the server, or, for a release without a Windows zip (before 0.3.0),
 # check that the installer says Windows builds start with 0.3.0 (as a file and through iex).
 #
-# It runs only once the releases are public. While they are internal (an anonymous request to
-# github.com gets 404), it says so and passes: that pass is NOT coverage of the real releases.
+# The releases are public, so it must run: if an anonymous request to github.com for the latest
+# release gets 404, it fails (never a skip that looks like a pass).
 #
 #   pwsh -File .github/scripts/windows-real-release.ps1
 $ErrorActionPreference = 'Continue'
@@ -34,21 +34,27 @@ $arch = if ($cpu -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $asset = "hardcharger-windows-$arch.zip"
 Write-Host "shell: $shell $($PSVersionTable.PSVersion); arch: $arch"
 
-# Public or internal, by an anonymous request to github.com (not the rate-limited API): 200 means
-# public, 404 internal; anything else is an error, so a GitHub hiccup can't pass as "internal".
+# Readable anonymously, by a request to github.com (not the rate-limited API): 200 means public,
+# 404 not. Anything else (a 5xx, a timeout) is tried again a few times, then is an error, so a
+# GitHub hiccup can't pass as either.
 $code = 0
-try {
-  $resp = Invoke-WebRequest -Uri 'https://github.com/gizmodata/hardcharger/releases/latest' -Method Head -UseBasicParsing
-  $code = [int]$resp.StatusCode
-} catch {
-  if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } else { $code = -1 }
+foreach ($attempt in 1..4) {
+  try {
+    $resp = Invoke-WebRequest -Uri 'https://github.com/gizmodata/hardcharger/releases/latest' -Method Head -UseBasicParsing
+    $code = [int]$resp.StatusCode
+  } catch {
+    if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } else { $code = -1 }
+  }
+  if ($code -eq 200 -or $code -eq 404) { break }
+  Write-Host "github.com answered HTTP $code (attempt $attempt of 4)"
+  if ($attempt -lt 4) { Start-Sleep -Seconds 3 }
 }
 if ($code -ne 200 -and $code -ne 404) { Write-Host "error: couldn't tell whether the releases are public (HTTP $code)"; exit 1 }
 $public = ($code -eq 200)
 if (-not $public) {
-  Write-Host '::notice title=Real-release check not run::gizmodata/hardcharger releases are internal; the real-release check runs at public launch.'
+  Write-Host "::error title=Real-release check::github.com answered 404 for gizmodata/hardcharger's latest release to an anonymous request. The releases are public, so this is a failure, not a skip."
   Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
-  exit 0
+  exit 1
 }
 Write-Host 'gizmodata/hardcharger releases are public: running the real-release check'
 

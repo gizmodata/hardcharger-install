@@ -1,7 +1,7 @@
 #!/bin/sh
 # install.sh end to end against fixture releases served by a local stand-in for GitHub
 # (fake_github.py), so it needs no credentials and no real release. Two servers run: one
-# "internal" (the API and downloads need a token, as gizmodata/hardcharger's do before launch) and
+# "internal" (the API and downloads need a token, as gizmodata/hardcharger's did before launch) and
 # one "public" (anonymous). Covered: latest and pinned installs with a token and anonymously,
 # the token going to the API but never to the storage host, GH_TOKEN and `gh auth token`,
 # downgrade, switching back without a download, the Get started lines, --list, SHA256SUMS and
@@ -218,7 +218,8 @@ step "11. A release without this platform's asset"
 # shellcheck disable=SC2086
 run nonzero $INTERNAL $WITH_TOKEN HARDCHARGER_VERSION=1.0.5 --
 expect "Hardcharger 1.0.5 has no $ASSET to download"
-expect_not "While the releases are internal"
+expect_not "is not a released version"   # the API described 1.0.5, so it exists
+expect_not "releases are internal"
 
 step "12. A version that doesn't exist"
 # shellcheck disable=SC2086
@@ -226,14 +227,18 @@ run nonzero $INTERNAL $WITH_TOKEN HARDCHARGER_VERSION=7.7.7 --
 expect "GitHub has no Hardcharger release '7.7.7' that this token can read"
 
 # ---- internal releases, no token ----------------------------------------------------------------
-step "13. Internal releases without a token: a clear message, nothing installed"
+step "13. No token and GitHub answers nothing: a clear message, nothing installed"
+# (The "internal" server refuses every anonymous request, as a rate-limited API does.)
 # shellcheck disable=SC2086
 run nonzero $INTERNAL $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-internal" --
-expect "set HARDCHARGER_INSTALL_TOKEN to a GitHub token that can read gizmodata/hardcharger"
+expect "couldn't find Hardcharger's latest release on GitHub"
+expect "set HARDCHARGER_INSTALL_TOKEN to a GitHub token"
+expect_not "releases are internal"
 # shellcheck disable=SC2086
 run nonzero $INTERNAL $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-internal" HARDCHARGER_VERSION=1.0.0 --
 expect "Hardcharger 1.0.0 has no $ASSET to download"
-expect "While the releases are internal, set HARDCHARGER_INSTALL_TOKEN"
+expect "If 1.0.0 is not a released version, pick one from https://github.com/gizmodata/hardcharger/releases"
+expect_not "releases are internal"
 [ ! -e "$ROOT/anon-internal/versions" ] || fail "a failed anonymous install left versions/"
 run 0 HARDCHARGER_PREFIX="$ROOT/anon-internal" -- --uninstall
 expect "it was empty"
@@ -254,6 +259,14 @@ step "15. Public, anonymous, pinned, with SHA256SUMS from the web download URL"
 # shellcheck disable=SC2086
 run 0 $PUBLIC $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION=1.0.0 --
 expect "Checksum OK (SHA256SUMS and GitHub's asset digest)"
+
+step "15b. Public, anonymous, a version that was never released: the message says so"
+# shellcheck disable=SC2086
+run nonzero $PUBLIC $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION=7.7.7 --
+expect "Hardcharger 7.7.7 has no $ASSET to download"
+expect "If 7.7.7 is not a released version, pick one from https://github.com/gizmodata/hardcharger/releases"
+expect_not "releases are internal"
+[ "$("$ROOT/anon/bin/hardcharger-server" --version)" = "Hardcharger 1.0.0" ] || fail "a failed install changed the current version"
 
 step "16. Public, anonymous, and the API refuses (rate limit): web fallbacks"
 rl="HARDCHARGER_INSTALL_GITHUB_API=http://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=$public_URL/web"

@@ -6,11 +6,9 @@ name: Test installers
 #   message). They need no credentials and no real release: fixture releases are served by a
 #   local stand-in for GitHub (fake_github.py), both "internal" (token required) and "public".
 #   These gate the deploy.
-# - The real-release check ("real release, runs at public launch"): install the real latest
-#   gizmodata/hardcharger release and query the server. While the releases are internal (an
-#   anonymous request to github.com gets 404) these jobs say so in a notice and pass; that pass
-#   is NOT coverage. Once the releases are public they run for real and must pass, with no flag
-#   to flip.
+# - The real-release check ("real release (…)"): install the real latest gizmodata/hardcharger
+#   release and query the server. The releases are public, so these jobs must run and pass: one
+#   that finds the releases unreadable anonymously (github.com answers 404) fails, never skips.
 #
 # Triggers: every pull request and push (main's pushes run this through deploy.yml, which
 # publishes only after it passes), hardcharger's releases (repository_dispatch
@@ -155,9 +153,9 @@ jobs:
             || { echo "::error::the installer failed without the glibc explanation"; exit 1; }
           if printf '%s\n' "$out" | grep -F "Downloading"; then echo "::error::it downloaded before refusing"; exit 1; fi
 
-  # ---- the real-release check: notice-and-pass while internal, real from public launch on --------
+  # ---- the real-release check: the published release, installed and queried ------------------------
   real-release:
-    name: real release, runs at public launch (${{ matrix.name }})
+    name: real release (${{ matrix.name }})
     needs: lint
     strategy:
       fail-fast: false
@@ -172,9 +170,11 @@ jobs:
       - name: Are gizmodata/hardcharger's releases public?
         id: vis
         run: echo "releases=$(.github/scripts/releases-public.sh)" >> "$GITHUB_OUTPUT"
-      - name: Internal releases, so not run
-        if: steps.vis.outputs.releases == 'internal'
-        run: echo "::notice title=Real-release check not run::gizmodata/hardcharger releases are internal; the real-release check runs at public launch."
+      - name: The releases must be readable anonymously
+        if: steps.vis.outputs.releases != 'public'
+        run: |
+          echo "::error title=Real-release check::github.com answered 404 for gizmodata/hardcharger's latest release to an anonymous request. The releases are public, so this is a failure, not a skip."
+          exit 1
       - name: Install the real release, query the server, switch, downgrade, uninstall
         if: steps.vis.outputs.releases == 'public'
         env:
@@ -184,7 +184,7 @@ jobs:
         run: .github/scripts/scenarios.sh "$HC_VERSION"
 
   real-release-container:
-    name: real release, runs at public launch (${{ matrix.name }})
+    name: real release (${{ matrix.name }})
     needs: lint
     # All supported glibc platforms must pass the published-release walkthrough.
     strategy:
@@ -202,9 +202,11 @@ jobs:
       - name: Are gizmodata/hardcharger's releases public?
         id: vis
         run: echo "releases=$(.github/scripts/releases-public.sh)" >> "$GITHUB_OUTPUT"
-      - name: Internal releases, so not run
-        if: steps.vis.outputs.releases == 'internal'
-        run: echo "::notice title=Real-release check not run::gizmodata/hardcharger releases are internal; the real-release check runs at public launch."
+      - name: The releases must be readable anonymously
+        if: steps.vis.outputs.releases != 'public'
+        run: |
+          echo "::error title=Real-release check::github.com answered 404 for gizmodata/hardcharger's latest release to an anonymous request. The releases are public, so this is a failure, not a skip."
+          exit 1
       - name: Install the real release, query the server, switch, downgrade, uninstall
         if: steps.vis.outputs.releases == 'public'
         env:
@@ -213,7 +215,7 @@ jobs:
         run: .github/scripts/scenarios.sh "$HC_VERSION"
 
   real-release-windows:
-    name: real release, runs at public launch (${{ matrix.name }})
+    name: real release (${{ matrix.name }})
     needs: lint
     strategy:
       fail-fast: false

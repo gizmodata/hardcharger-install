@@ -1,16 +1,15 @@
 #!/bin/sh
 # The real-release check: install.sh against the real gizmodata/hardcharger releases, with the
 # server started and queried after each install (fixture-scenarios.sh covers the same ground
-# without credentials and gates the deploy). Run once the releases are public:
+# without credentials and gates the deploy):
 # install, smoke test, downgrade, switch back without a download, --list, a corrupted
 # download, a build that doesn't run, a SHA256SUMS without the asset, anonymous downloads,
 # --modify-path, uninstalling one version, the current one, and everything.
 #
 #   [HARDCHARGER_INSTALL_TOKEN=...] .github/scripts/scenarios.sh [<version under test>]
 #
-# A token (CI passes its GITHUB_TOKEN, against the API's anonymous rate limit) is optional once the
-# releases are public, and needed before. It is never printed. Runs in a throwaway HOME. SH picks
-# the shell the installer runs under (default sh).
+# A token (CI passes its GITHUB_TOKEN, against the API's anonymous rate limit) is optional. It is
+# never printed. Runs in a throwaway HOME. SH picks the shell the installer runs under (default sh).
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -173,23 +172,17 @@ run 0 HARDCHARGER_VERSION="$UNDER_TEST" --
 is_current "$UNDER_TEST"
 
 # ---------------------------------------------------------------------------------------------
-step "7. Anonymous (no token)"
-if curl -fsS -o /dev/null "https://github.com/$REPO/releases/latest" 2>/dev/null; then
-  echo "releases are public: anonymous downloads must work"
-  run 0 HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$UNDER_TEST" --
-  expect "Installed Hardcharger $UNDER_TEST"
-  "$HERE/e2e.sh" "$ROOT/anon/bin" "$((PORT + 6))" "$UNDER_TEST"
-else
-  echo "releases are internal: anonymous downloads must fail with a clear message"
-  run nonzero HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" --
-  expect "set HARDCHARGER_INSTALL_TOKEN to a GitHub token that can read $REPO"
-  run nonzero HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$UNDER_TEST" --
-  expect "Hardcharger $UNDER_TEST has no $ASSET to download"
-  expect "set HARDCHARGER_INSTALL_TOKEN"
-  [ ! -e "$ROOT/anon/versions" ] || fail "an anonymous failure left versions/ behind"
-  run 0 HARDCHARGER_PREFIX="$ROOT/anon" -- --uninstall
-  [ ! -e "$ROOT/anon" ] || fail "--uninstall left the empty prefix of a failed install"
-fi
+step "7. Anonymous (no token): the releases are public, so it must install"
+run 0 HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION="$UNDER_TEST" --
+expect "Installed Hardcharger $UNDER_TEST"
+"$HERE/e2e.sh" "$ROOT/anon/bin" "$((PORT + 6))" "$UNDER_TEST"
+
+step "7b. Anonymous, a version that was never released: the message says so, nothing changes"
+run nonzero HARDCHARGER_INSTALL_TOKEN=none GH_TOKEN= HARDCHARGER_PREFIX="$ROOT/anon" HARDCHARGER_VERSION=999.0.0 --
+expect "Hardcharger 999.0.0 has no $ASSET to download"
+expect "If 999.0.0 is not a released version, pick one from https://github.com/$REPO/releases"
+expect_not "releases are internal"
+[ ! -e "$ROOT/anon/versions/999.0.0" ] || fail "a version that doesn't exist left a directory"
 
 step "8. --modify-path (bash), twice: one line"
 run 0 SHELL=/bin/bash -- --modify-path

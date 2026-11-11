@@ -151,13 +151,12 @@ and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It r
 | fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds start with 0.3.0" for a release with no zip, both as a file and through `iex` |
 | glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | 0.2.0 is refused with the glibc explanation, before any download |
 
-**The real-release check: `real release, runs at public launch (…)`** (the jobs keep the name they
-had before the launch). They install the real latest release on Linux, macOS, Debian 13, Debian 12,
-Oracle Linux 8 and Windows, then start the server and query it, and every deploy depends on them.
-Each job first asks whether gizmodata/hardcharger's releases can be read anonymously
-([`releases-public.sh`](.github/scripts/releases-public.sh)); they can, so the jobs run for real
-and must pass. (Were the releases ever private again, the jobs would post a "not run" notice and
-pass. **That pass would not be coverage.**) The Debian 12 and Oracle Linux 8 entries are
+**The real-release check: `real release (…)`.** These jobs install the real latest release on
+Linux, macOS, Debian 13, Debian 12, Oracle Linux 8 and Windows, then start the server and query it,
+and every deploy depends on them. Each job first checks that gizmodata/hardcharger's releases can
+be read anonymously ([`releases-public.sh`](.github/scripts/releases-public.sh)); if they can't,
+the job fails rather than skips. They also ask for a version that was never released and check
+that the installer says so. The Debian 12 and Oracle Linux 8 entries are
 `continue-on-error`: the latest release needs only glibc 2.28 (since 0.3.0), but `scenarios.sh`
 also downgrades to 0.1.2, which needs glibc 2.38.
 

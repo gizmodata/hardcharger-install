@@ -7,7 +7,26 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Fixed
+
+- The installers no longer say "While the releases are internal, set HARDCHARGER_INSTALL_TOKEN…":
+  Hardcharger's releases are public. Asking for a version that was never released now ends with
+  "If X.Y.Z is not a released version, pick one from https://github.com/gizmodata/hardcharger/releases"
+  (`install.sh`; only when GitHub's API didn't describe the release) or "there is no such release,
+  or its API is rate-limiting this address" (`install.ps1`). When the latest release can't be
+  found, the message names the cause (no answer from GitHub, or its anonymous rate limit) and the
+  ways on: try again, pass a version, or use a GitHub token.
+
 ### Changed
+
+- README: no token is needed; the GitHub token is described as what it is now (optional, sent with
+  the API requests only), the "At public launch" checklist is gone, and Homebrew
+  (`brew install gizmodata/tap/hardcharger`, the `hardcharger-desktop` cask) is listed as the
+  other way to install.
+- The real-release jobs are named `real release (…)`, fail (instead of posting a notice and
+  passing) if the releases can't be read anonymously, try the visibility probe again after a 5xx
+  or a timeout (a GitHub 504 failed the weekly run of 2026-11-09), and check the message for a
+  version that was never released.
 
 - The real-release smoke tests (`e2e.sh` and `windows-real-release.ps1`) use the Chargewire
   protocol at `/chargewire/v1`. They still check releases from before the rename (2.2.0 and

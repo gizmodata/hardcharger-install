@@ -8,7 +8,7 @@
 #    latest, SHA256SUMS and GitHub's digest, a release without a Windows zip ("Windows builds start
 #    with 0.3.0", as a file and through iex), the token kept off the storage host, anonymous public.
 #
-# The real releases are tested by windows-real-release.ps1, from public launch on.
+# The real releases are tested by windows-real-release.ps1.
 #   pwsh -File .github/scripts/windows-tests.ps1         (or powershell -File ... for 5.1)
 # Continue: under 5.1 a native command's stderr is an error record, and the installer's own
 # error message must reach the checks below instead of stopping this script.
@@ -135,7 +135,9 @@ try {
   $p3 = Join-Path $root 'hc-gh'
   $int = @{ HARDCHARGER_INSTALL_GITHUB_API = $servers.internal.Api; HARDCHARGER_INSTALL_TOKEN = 'none'; HARDCHARGER_VERSION = '' }
   $r = Invoke-Installer @('-Prefix', $p3) $int
-  Check 'internal, no token: clear message, non-zero' ($r.Code -ne 0 -and $r.Out -match "couldn't find Hardcharger release 'latest'" -and $r.Out -match 'HARDCHARGER_INSTALL_TOKEN')
+  Check 'no token and no answer from the API: clear message, non-zero' ($r.Code -ne 0 -and $r.Out -match "couldn't find Hardcharger release 'latest'" -and $r.Out -match 'its API did not answer' -and $r.Out -match 'HARDCHARGER_INSTALL_TOKEN' -and $r.Out -notmatch 'releases are internal')
+  $r = Invoke-Installer @('-Prefix', $p3, '-Version', '7.7.7') $int
+  Check 'no token, a version GitHub does not describe: says there may be no such release' ($r.Code -ne 0 -and $r.Out -match "couldn't find Hardcharger release '7.7.7'" -and $r.Out -match 'there is no such release' -and $r.Out -notmatch 'releases are internal')
 
   $int.HARDCHARGER_INSTALL_TOKEN = $token
   $r = Invoke-Installer @('-Prefix', $p3) $int

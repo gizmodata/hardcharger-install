@@ -399,7 +399,7 @@ resolve_release() {
   fi
   VER="$(normalize_version "${TAG:-}")" || VER=""
   if [ -z "$VER" ] || [ "$VER" = latest ]; then
-    fatal "couldn't find Hardcharger's latest release on GitHub. While the releases are internal, set HARDCHARGER_INSTALL_TOKEN to a GitHub token that can read $REPO (or sign in with \`gh auth login\`), or pass a version: HARDCHARGER_VERSION=X.Y.Z"
+    fatal "couldn't find Hardcharger's latest release on GitHub: its API didn't answer (anonymous requests are rate-limited per address) and neither did github.com. Try again in a few minutes, pass a version (HARDCHARGER_VERSION=X.Y.Z), or set HARDCHARGER_INSTALL_TOKEN to a GitHub token (or sign in with \`gh auth login\`) to get past the rate limit."
   fi
   TAG="v$VER"
 }
@@ -521,8 +521,11 @@ do_install() {
     asset="hardcharger-$PLATFORM.tar.gz"
     info "Downloading Hardcharger $VER for $PLATFORM ($asset)"
     if ! fetch_asset "$asset" "$WORK/$asset"; then
+      # When GitHub's API described the release, it exists and just has no build for this
+      # platform. Otherwise (an anonymous request the API refused or answered 404) the version
+      # may never have been released.
       hint=""
-      [ -n "$AUTH_HDR" ] || [ -n "${HARDCHARGER_INSTALL_MIRROR:-}" ] || hint=" While the releases are internal, set HARDCHARGER_INSTALL_TOKEN to a GitHub token that can read $REPO (or sign in with \`gh auth login\`)."
+      [ -n "${RELEASE_JSON:-}" ] || [ -n "${HARDCHARGER_INSTALL_MIRROR:-}" ] || hint=" If $VER is not a released version, pick one from https://github.com/$REPO/releases"
       fatal "Hardcharger $VER has no $asset to download (see https://github.com/$REPO/releases/tag/$TAG).$hint"
     fi
     verify_checksum "$WORK/$asset" "$asset"
