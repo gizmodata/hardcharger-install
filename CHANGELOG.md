@@ -23,8 +23,8 @@ All notable changes to the Hardcharger installer are documented here. The format
   the API requests only), the "At public launch" checklist is gone, and Homebrew
   (`brew install gizmodata/tap/hardcharger`, the `hardcharger-desktop` cask) is listed as the
   other way to install.
-- The real-release jobs are named `real release (…)`, fail (instead of posting a notice and
-  passing) if the releases can't be read anonymously, try the visibility probe again after a 5xx
+- The real-release jobs fail (instead of posting a notice and passing) if the releases can't be
+  read anonymously, try the visibility probe again after a 5xx
   or a timeout (a GitHub 504 failed the weekly run of 2026-11-09), and check the message for a
   version that was never released.
 

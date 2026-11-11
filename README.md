@@ -151,9 +151,10 @@ and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It r
 | fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds start with 0.3.0" for a release with no zip, both as a file and through `iex` |
 | glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | 0.2.0 is refused with the glibc explanation, before any download |
 
-**The real-release check: `real release (…)`.** These jobs install the real latest release on
-Linux, macOS, Debian 13, Debian 12, Oracle Linux 8 and Windows, then start the server and query it,
-and every deploy depends on them. Each job first checks that gizmodata/hardcharger's releases can
+**The real-release check: `real release, runs at public launch (…)`.** (The name is from before
+the launch; main's branch protection requires the linux-amd64 job by that name.) These jobs install
+the real latest release on Linux, macOS, Debian 13, Debian 12, Oracle Linux 8 and Windows, then
+start the server and query it, and every deploy depends on them. Each job first checks that gizmodata/hardcharger's releases can
 be read anonymously ([`releases-public.sh`](.github/scripts/releases-public.sh)); if they can't,
 the job fails rather than skips. They also ask for a version that was never released and check
 that the installer says so. The Debian 12 and Oracle Linux 8 entries are
