@@ -7,6 +7,8 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
 ### Security
 
 Fixes from the security review of gizmodata/adbc-install, whose installer was modeled on this one:
