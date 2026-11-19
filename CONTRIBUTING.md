@@ -35,6 +35,11 @@ one commit with `git commit --amend -s`, or a series with `git rebase --signoff 
 - Never include credentials, customer data or internal host names in code, tests, fixtures or
   commit messages.
 
+## Deploys
+
+A merge to `main` deploys to <https://install.hardcharger.gizmodata.com> only after the tests pass
+and Philip approves the run in the repository's `production` environment.
+
 ## Code of conduct
 
 This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).

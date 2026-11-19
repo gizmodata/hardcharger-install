@@ -24,11 +24,15 @@
 # Environment:
 #   HARDCHARGER_INSTALL_TOKEN  a GitHub token that can read gizmodata/hardcharger's releases
 #                              (also GH_TOKEN, then `gh auth token`); "none" downloads anonymously.
-#   HARDCHARGER_INSTALL_MIRROR a directory or URL laid out like the releases
-#                              (<mirror>/vX.Y.Z/<asset>, <mirror>/vX.Y.Z/SHA256SUMS)
+#   HARDCHARGER_INSTALL_MIRROR a directory or https:// URL laid out like the releases
+#                              (<mirror>/vX.Y.Z/<asset>); the download is still checked against
+#                              the GitHub release's SHA256SUMS (or HARDCHARGER_INSTALL_SHA256)
+#   HARDCHARGER_INSTALL_SHA256 the tarball's SHA-256, for a machine that can't reach github.com
+#   HARDCHARGER_INSTALL_ALLOW_HTTP=1  let HARDCHARGER_INSTALL_MIRROR be a plain http:// URL
 #   HARDCHARGER_INSTALL_GITHUB_API, HARDCHARGER_INSTALL_GITHUB_WEB
 #                              for tests: GitHub's API and web base URLs (default
-#                              https://api.github.com, https://github.com); plain http is allowed only then
+#                              https://api.github.com, https://github.com); plain http needs
+#                              HARDCHARGER_INSTALL_TEST_INSECURE=1 as well
 #
 # Source: https://github.com/gizmodata/hardcharger-install
 
@@ -39,8 +43,10 @@ INSTALL_URL="https://install.hardcharger.gizmodata.com"
 GH_API="${HARDCHARGER_INSTALL_GITHUB_API:-https://api.github.com}"
 GH_WEB="${HARDCHARGER_INSTALL_GITHUB_WEB:-https://github.com}"
 API="${GH_API%/}/repos/${REPO}"
+# Every download is https, through every redirect (--proto and --proto-redir). Plain http is only for
+# the tests' stand-in for GitHub, and needs HARDCHARGER_INSTALL_TEST_INSECURE=1.
 PROTO="=https"
-if [ -n "${HARDCHARGER_INSTALL_GITHUB_API:-}${HARDCHARGER_INSTALL_GITHUB_WEB:-}" ]; then PROTO="=http,https"; fi
+if [ "${HARDCHARGER_INSTALL_TEST_INSECURE:-}" = 1 ]; then PROTO="=http,https"; fi
 
 # Oldest glibc any Hardcharger Linux build supports (manylinux_2_28).
 GLIBC_FLOOR="2.28"
@@ -55,6 +61,15 @@ fi
 info()  { printf '%s==>%s %s\n' "${G}${B}" "$N" "$*"; }
 warn()  { printf '%swarning:%s %s\n' "${Y}${B}" "$N" "$*" >&2; }
 fatal() { printf '%serror:%s %s\n' "${R}${B}" "$N" "$*" >&2; exit 1; }
+
+for u in "$GH_API" "$GH_WEB"; do
+  case "$u" in
+    https://*) ;;
+    http://*) [ "${HARDCHARGER_INSTALL_TEST_INSECURE:-}" = 1 ] \
+      || fatal "HARDCHARGER_INSTALL_GITHUB_API and _WEB are test settings and must be https:// (got $u)" ;;
+    *) fatal "HARDCHARGER_INSTALL_GITHUB_API and _WEB must be https:// URLs (got $u)" ;;
+  esac
+done
 
 usage() {
   cat <<EOF
@@ -75,7 +90,10 @@ Options (with \`sh -s -- <options>\` when piping):
 Environment:
   HARDCHARGER_INSTALL_TOKEN   GitHub token that can read $REPO releases
                               (falls back to GH_TOKEN, then \`gh auth token\`; "none" = anonymous)
-  HARDCHARGER_INSTALL_MIRROR  directory or URL laid out like the releases (vX.Y.Z/<asset>)
+  HARDCHARGER_INSTALL_MIRROR  directory or https:// URL laid out like the releases (vX.Y.Z/<asset>);
+                              checked against the GitHub release's SHA256SUMS all the same
+  HARDCHARGER_INSTALL_SHA256  the tarball's SHA-256 (for a machine without github.com)
+  HARDCHARGER_INSTALL_ALLOW_HTTP=1  allow a plain http:// mirror
 
 Windows: irm $INSTALL_URL/install.ps1 | iex
 EOF
@@ -116,6 +134,8 @@ VERSIONS="$PREFIX/versions"
 normalize_version() {
   nv="${1#v}"
   case "$1" in latest|"") echo latest; return 0 ;; esac
+  # The whole value: one line of ASCII letters, digits and . - + (grep alone passes if ANY line matches).
+  case "$nv" in *[!0-9A-Za-z.+-]*) return 1 ;; esac
   if printf '%s\n' "$nv" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
     echo "$nv"
   else
@@ -344,10 +364,10 @@ PROGRESS="-s"
 # curl_api <url> <out>: GitHub API JSON, with the token when there is one.
 curl_api() {
   if [ -n "$AUTH_HDR" ]; then
-    curl -fsSL --proto "$PROTO" --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/vnd.github+json' \
+    curl -fsSL --proto "$PROTO" --proto-redir "$PROTO" --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/vnd.github+json' \
       -H 'X-GitHub-Api-Version: 2022-11-28' -o "$2" "$1"
   else
-    curl -fsSL --proto "$PROTO" --retry 3 -H 'Accept: application/vnd.github+json' -o "$2" "$1"
+    curl -fsSL --proto "$PROTO" --proto-redir "$PROTO" --retry 3 -H 'Accept: application/vnd.github+json' -o "$2" "$1"
   fi
 }
 
@@ -392,7 +412,7 @@ resolve_release() {
     fatal "GitHub has no Hardcharger release '$VERSION' that this token can read ($api_url). See https://github.com/$REPO/releases"
   elif [ "$VERSION" = latest ]; then
     # Anonymous and the API refused (rate limit): ask github.com where /releases/latest goes.
-    TAG="$(curl -fsSLI --proto "$PROTO" -o /dev/null -w '%{url_effective}' "${GH_WEB%/}/$REPO/releases/latest" 2>/dev/null || true)"
+    TAG="$(curl -fsSLI --proto "$PROTO" --proto-redir "$PROTO" -o /dev/null -w '%{url_effective}' "${GH_WEB%/}/$REPO/releases/latest" 2>/dev/null || true)"
     TAG="${TAG##*/}"
   else
     TAG="v$VERSION"
@@ -408,8 +428,15 @@ resolve_release() {
 fetch_asset() {
   if [ -n "${HARDCHARGER_INSTALL_MIRROR:-}" ]; then
     m="${HARDCHARGER_INSTALL_MIRROR%/}"
-    case "$m" in *://*) ;; *) m="file://$m" ;; esac
-    curl -fSL $PROGRESS -o "$2" "$m/$TAG/$1" 2>/dev/null
+    case "$m" in
+      https://*) mp="=https" ;;
+      http://*) [ "${HARDCHARGER_INSTALL_ALLOW_HTTP:-}" = 1 ] || [ "${HARDCHARGER_INSTALL_TEST_INSECURE:-}" = 1 ] \
+          || fatal "HARDCHARGER_INSTALL_MIRROR $m is plain http: set HARDCHARGER_INSTALL_ALLOW_HTTP=1 to download from it (the tarball is still checked against the GitHub release's SHA256SUMS)"
+        mp="=http,https" ;;
+      *://*) fatal "HARDCHARGER_INSTALL_MIRROR must be a directory or an https:// URL (got $m)" ;;
+      *) m="file://$m"; mp="=file" ;;
+    esac
+    curl -fSL $PROGRESS --proto "$mp" --proto-redir "$mp" -o "$2" "$m/$TAG/$1" 2>/dev/null
     return
   fi
   if [ -n "$AUTH_HDR" ]; then
@@ -417,18 +444,37 @@ fetch_asset() {
     ai="$(asset_info "$RELEASE_JSON" "$1")"
     [ -n "$ai" ] || return 1
     # curl sends a -H Authorization header only to the API host, not to the storage host it redirects to.
-    curl -fSL $PROGRESS --proto "$PROTO" --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/octet-stream' \
+    curl -fSL $PROGRESS --proto "$PROTO" --proto-redir "$PROTO" --retry 3 -H @"$AUTH_HDR" -H 'Accept: application/octet-stream' \
       -o "$2" "$API/releases/assets/${ai%% *}"
   else
-    curl -fSL $PROGRESS --proto "$PROTO" --retry 3 -o "$2" "${GH_WEB%/}/$REPO/releases/download/$TAG/$1" 2>/dev/null
+    curl -fSL $PROGRESS --proto "$PROTO" --proto-redir "$PROTO" --retry 3 -o "$2" "${GH_WEB%/}/$REPO/releases/download/$TAG/$1" 2>/dev/null
   fi
 }
 
-# Checks $1 (named $2) against SHA256SUMS and GitHub's own asset digest, whichever exist.
+# fetch_sums <out>: the release's SHA256SUMS, always from GitHub (never from a mirror, which must
+# not vouch for its own files). 0 on success, 1 when there is none.
+fetch_sums() {
+  if [ -n "${HARDCHARGER_INSTALL_MIRROR:-}" ]; then
+    curl -fsSL --proto "$PROTO" --proto-redir "$PROTO" --retry 3 -o "$1" "${GH_WEB%/}/$REPO/releases/download/$TAG/SHA256SUMS" 2>/dev/null
+  else
+    fetch_asset SHA256SUMS "$1" >/dev/null 2>&1
+  fi
+}
+
+# Checks $1 (named $2) against HARDCHARGER_INSTALL_SHA256, or else the release's SHA256SUMS and
+# GitHub's own asset digest, whichever exist. With none of them, nothing is installed.
 verify_checksum() {
   checked=""
   have="$(sha256_of "$1")" || fatal "no sha256sum, shasum or openssl here to check the download with; install one and run again"
-  if fetch_asset SHA256SUMS "$WORK/SHA256SUMS" >/dev/null 2>&1; then
+  if [ -n "${HARDCHARGER_INSTALL_SHA256:-}" ]; then
+    want="$(printf '%s' "$HARDCHARGER_INSTALL_SHA256" | tr 'A-F' 'a-f')"
+    case "$want" in *[!0-9a-f]*) fatal "HARDCHARGER_INSTALL_SHA256 must be 64 hexadecimal digits" ;; esac
+    [ "${#want}" = 64 ] || fatal "HARDCHARGER_INSTALL_SHA256 must be 64 hexadecimal digits"
+    [ "$have" = "$want" ] || fatal "checksum mismatch for $2: HARDCHARGER_INSTALL_SHA256 says $want, the download is $have. Nothing was changed."
+    info "Checksum OK (HARDCHARGER_INSTALL_SHA256): $have"
+    return 0
+  fi
+  if fetch_sums "$WORK/SHA256SUMS"; then
     want="$(awk -v f="$2" '{n = $2; sub(/^\*/, "", n)} n == f {print $1; exit}' "$WORK/SHA256SUMS")"
     [ -n "$want" ] || fatal "the release's SHA256SUMS has no line for $2; not installing it"
     [ "$have" = "$want" ] || fatal "checksum mismatch for $2: SHA256SUMS says $want, the download is $have. Nothing was changed; run again, and report it if it repeats."
@@ -442,11 +488,10 @@ verify_checksum() {
         checked="${checked:+$checked and }GitHub's asset digest" ;;
     esac
   fi
-  if [ -n "$checked" ]; then
-    info "Checksum OK ($checked): $have"
-  else
-    warn "no checksum is published for $2 (no SHA256SUMS, and GitHub's API didn't answer); relying on HTTPS alone"
+  if [ -z "$checked" ]; then
+    fatal "no checksum for $2 could be found (the release has no SHA256SUMS, and GitHub's API didn't answer with its digest), so it wasn't installed. Try again in a few minutes, set HARDCHARGER_INSTALL_TOKEN (or sign in with \`gh auth login\`) to get past the API's rate limit, or pass the tarball's SHA-256 as HARDCHARGER_INSTALL_SHA256."
   fi
+  info "Checksum OK ($checked): $have"
 }
 
 # Runs the executables of an unpacked build; prints why it failed and returns 1 if one doesn't run.
@@ -531,6 +576,16 @@ do_install() {
     verify_checksum "$WORK/$asset" "$asset"
     mkdir "$WORK/x"
     tar -xzf "$WORK/$asset" -C "$WORK/x" || fatal "couldn't unpack $asset"
+    # Only regular files, folders, and links that stay inside the build: no devices or pipes, and
+    # no link to an absolute path or out through "..".
+    odd="$(find "$WORK/x" ! -type f ! -type d ! -type l | head -n 1)"
+    [ -z "$odd" ] || fatal "$asset holds ${odd#"$WORK/x/"}, which is not a regular file, folder or link; not installing it"
+    find "$WORK/x" -type l > "$WORK/links"
+    while IFS= read -r l; do
+      case "$(readlink "$l")" in
+        /*|..|../*|*/..|*/../*) fatal "$asset holds ${l#"$WORK/x/"}, a link to $(readlink "$l") outside the build; not installing it" ;;
+      esac
+    done < "$WORK/links"
     top="$WORK/x/hardcharger-$PLATFORM"
     [ -d "$top" ] || top="$WORK/x"
     # Releases before 0.2.0 named the server `hardcharger` (the client's name since 0.2.0):

@@ -84,7 +84,9 @@ curl https://install.hardcharger.gizmodata.com | sh -s -- --uninstall           
 | `--uninstall [<v>]` | | remove one version, or the whole prefix |
 | `--modify-path` | | add `<prefix>/bin` to your shell's startup file (otherwise the line is only printed) |
 | | `HARDCHARGER_INSTALL_TOKEN` | optional GitHub token for the API requests (default: `GH_TOKEN`, then `gh auth token`); `none` sends no token |
-| | `HARDCHARGER_INSTALL_MIRROR` | a directory or URL laid out like the releases (`vX.Y.Z/<asset>`, `vX.Y.Z/SHA256SUMS`) |
+| | `HARDCHARGER_INSTALL_MIRROR` | a directory or `https://` URL laid out like the releases (`vX.Y.Z/<asset>`); the tarball is still checked against the GitHub release's `SHA256SUMS`, never the mirror's |
+| | `HARDCHARGER_INSTALL_SHA256` | the tarball's (or zip's) SHA-256, for a machine that can't reach github.com |
+| | `HARDCHARGER_INSTALL_ALLOW_HTTP=1` | allow a plain `http://` mirror (checked the same way) |
 
 `install.ps1` takes the same options as `-Version`, `-Prefix`, `-List`, `-Uninstall [-Version v]`
 and `-ModifyPath`.
@@ -126,7 +128,12 @@ Put `~/.hardcharger/bin` on your `PATH` (the installer prints the exact line). O
   Raspberry Pi OS Bookworm, RHEL/Oracle Linux 8, Ubuntu 20.04). This is a table in `install.sh`,
   since releases don't publish it.
 - **The download.** It checks the tarball against the release's `SHA256SUMS` when the release
-  has one, and against GitHub's own SHA-256 digest of the asset. It refuses a mismatch.
+  has one, and against GitHub's own SHA-256 digest of the asset, both from GitHub (also when the
+  tarball came from a mirror), or against `HARDCHARGER_INSTALL_SHA256`. It refuses a mismatch, and
+  it refuses to install when no checksum can be found at all. Every download is https, through
+  every redirect.
+- **The archive.** Only regular files, folders, and links that stay inside the build: a device,
+  a pipe, or a link to an absolute path or out through `..` is refused.
 - **The binaries, before switching.** Every executable must run `--version` (and the build's real
   `GLIBC_` symbols must fit the system) before the current version changes. A failed download,
   checksum or check leaves the previous version current.
@@ -173,12 +180,15 @@ Run them locally (each uses a throwaway `HOME`):
 
 ## 🚀 Deploy
 
-[`deploy.yml`](.github/workflows/deploy.yml) runs on every push to `main`. Only after the tests
-pass does it upload `install.sh` (served at `/`) and `install.ps1` as `text/plain` to the private
+[`deploy.yml`](.github/workflows/deploy.yml) runs on every push to `main`, and its upload waits
+for Philip's approval in the `production` environment (the only required reviewer; admins may
+bypass; `main` only). Only after the tests pass does it upload `install.sh` (served at `/`) and `install.ps1` as `text/plain` to the private
 S3 bucket `gizmodata-hardcharger-install`. It then invalidates CloudFront distribution `E1RQCZI4UV7Y9O`
 and checks that the live https and http URLs serve exactly this commit's files. It reaches AWS by GitHub
-OIDC, with a role that trusts only this repo's `main` and can only write that bucket and invalidate
-that distribution. The bucket, distribution, certificate, DNS and role are in
+OIDC, from that environment, with a role that can only write that bucket and invalidate that
+distribution. That job runs nothing it downloads; a separate `verify` job without AWS access runs
+the one-liners. Every action is pinned to a commit SHA ([`check_workflows.py`](.github/scripts/check_workflows.py)
+enforces both). The bucket, distribution, certificate, DNS and role are in
 [gizmodata-infrastructure-terraform](https://github.com/gizmodata/gizmodata-infrastructure-terraform)
 (`aws/dns/hardcharger_install.tf`).
 

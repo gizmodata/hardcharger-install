@@ -32,7 +32,7 @@ jobs:
           payload=$(printf '%s' "$tok" | cut -d. -f2 | tr '_-' '/+')
           while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
           printf '%s' "$payload" | base64 -d | jq '{sub, aud, repository, repository_id, ref}'
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::920373031680:role/github-hardcharger-install-deploy
           aws-region: us-east-2

@@ -147,10 +147,11 @@ run 0 -- --uninstall "$MIRRORED"
 run 0 HARDCHARGER_VERSION="$UNDER_TEST" --
 is_current "$UNDER_TEST"
 
-step "6c. A SHA256SUMS without a line for the asset is refused"
-echo "0000000000000000000000000000000000000000000000000000000000000000  something-else.tar.gz" > "$M/v$MIRRORED/SHA256SUMS"
+step "6c. A mirror's own SHA256SUMS is not trusted: a changed tarball is checked against the GitHub release's"
+printf 'X' | dd of="$M/v$MIRRORED/$ASSET" bs=1 seek=$((size / 2)) conv=notrunc 2>/dev/null
+echo "$(sum "$M/v$MIRRORED/$ASSET")  $ASSET" > "$M/v$MIRRORED/SHA256SUMS"
 run nonzero HARDCHARGER_VERSION="$MIRRORED" HARDCHARGER_INSTALL_MIRROR="$M" --
-expect "the release's SHA256SUMS has no line for $ASSET"
+expect "checksum mismatch for $ASSET: SHA256SUMS says $(sum "$ROOT/good.tar.gz")"
 is_current "$UNDER_TEST"
 
 step "6d. A build whose server doesn't run is refused, and $UNDER_TEST stays current"
@@ -159,8 +160,8 @@ printf '#!/bin/sh\necho "simulated loader failure" >&2\nexit 127\n' > "$ROOT/bro
 chmod +x "$ROOT/broken/hardcharger-$PLATFORM/bin/hardcharger-server"
 mkdir -p "$M/v9.9.9"
 tar -czf "$M/v9.9.9/$ASSET" -C "$ROOT/broken" "hardcharger-$PLATFORM"
-echo "$(sum "$M/v9.9.9/$ASSET")  $ASSET" > "$M/v9.9.9/SHA256SUMS"
-run nonzero HARDCHARGER_VERSION=9.9.9 HARDCHARGER_INSTALL_MIRROR="$M" --
+# 9.9.9 is not a GitHub release, so its checksum is given (HARDCHARGER_INSTALL_SHA256).
+run nonzero HARDCHARGER_VERSION=9.9.9 HARDCHARGER_INSTALL_MIRROR="$M" HARDCHARGER_INSTALL_SHA256="$(sum "$M/v9.9.9/$ASSET")" --
 expect "simulated loader failure"
 expect "Hardcharger 9.9.9 doesn't run on this system, so it wasn't installed; $UNDER_TEST is still current"
 is_current "$UNDER_TEST"
