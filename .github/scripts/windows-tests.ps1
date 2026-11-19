@@ -92,14 +92,16 @@ Check 'switch back to 9.9.9 without a download (env version)' ($r.Code -eq 0 -an
 $r = Invoke-Installer @('-Prefix', $prefix, '-List')
 Check '-List' ($r.Out -match '\* 9\.9\.9 \(current\)' -and $r.Out -match '    9\.9\.8')
 
+# A prefix with nothing installed, so these downloads aren't skipped as "installed already".
+$sp = Join-Path $root 'hc-mirror'
 $bad = Join-Path $root 'mirror-bad\v9.9.8'
 New-Item -ItemType Directory -Force -Path $bad | Out-Null
 Copy-Item (Join-Path $mirror "v9.9.8\$asset") (Join-Path $bad $asset)
 $bytes = [IO.File]::ReadAllBytes((Join-Path $bad $asset)); $bytes[[int]($bytes.Length / 2)] = $bytes[[int]($bytes.Length / 2)] -bxor 0xFF
 [IO.File]::WriteAllBytes((Join-Path $bad $asset), $bytes)
 Copy-Item (Join-Path $mirror 'v9.9.8\SHA256SUMS') (Join-Path $bad 'SHA256SUMS')
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-bad') }
-Check 'corrupted zip refused' ($r.Code -ne 0 -and $r.Out -match "checksum mismatch for ${asset}: SHA256SUMS says" -and (Current) -eq '9.9.9')
+$r = Invoke-Installer @('-Prefix', $sp, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-bad') }
+Check 'corrupted zip refused' ($r.Code -ne 0 -and $r.Out -match "checksum mismatch for ${asset}: SHA256SUMS says" -and -not (Test-Path (Join-Path $sp 'versions\9.9.8')))
 # A mirror's own, valid build of 9.9.8 (one file more), with a SHA256SUMS that matches it: the
 # checksums come from GitHub's release, so it is refused.
 $evilBuild = Join-Path $root 'evil-build'
@@ -109,19 +111,18 @@ $evil = Join-Path $root 'mirror-evil\v9.9.8'
 New-Item -ItemType Directory -Force -Path $evil | Out-Null
 Compress-Archive -Path (Join-Path $evilBuild "hardcharger-windows-$arch") -DestinationPath (Join-Path $evil $asset) -Force
 Set-Content -Path (Join-Path $evil 'SHA256SUMS') -Value "$((Get-FileHash -Algorithm SHA256 (Join-Path $evil $asset)).Hash.ToLowerInvariant())  $asset" -Encoding ascii
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-evil') }
+$r = Invoke-Installer @('-Prefix', $sp, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-evil') }
 $good98 = (Get-FileHash -Algorithm SHA256 (Join-Path $mirror "v9.9.8\$asset")).Hash.ToLowerInvariant()
-Check "a mirror's own SHA256SUMS is not trusted" ($r.Code -ne 0 -and $r.Out.Contains("checksum mismatch for ${asset}: SHA256SUMS says $good98") -and (Current) -eq '9.9.9')
+Check "a mirror's own SHA256SUMS is not trusted" ($r.Code -ne 0 -and $r.Out.Contains("checksum mismatch for ${asset}: SHA256SUMS says $good98") -and -not (Test-Path (Join-Path $sp 'versions\9.9.8')))
 # A version GitHub has no SHA256SUMS for: refused, unless HARDCHARGER_INSTALL_SHA256 gives it.
 $only = Join-Path $root 'mirror-only\v9.9.4'
 New-Item -ItemType Directory -Force -Path $only | Out-Null
 Copy-Item (Join-Path $mirror "v9.9.8\$asset") (Join-Path $only $asset)
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.4') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-only') }
-Check 'no checksum anywhere: refused (no "relying on HTTPS alone")' ($r.Code -ne 0 -and $r.Out -match "no checksum for $([regex]::Escape($asset)) could be found" -and -not (Test-Path (Join-Path $prefix 'versions\9.9.4')))
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.4') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-only'); HARDCHARGER_INSTALL_SHA256 = $good98 }
+$r = Invoke-Installer @('-Prefix', $sp, '-Version', '9.9.4') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-only') }
+Check 'no checksum anywhere: refused (no "relying on HTTPS alone")' ($r.Code -ne 0 -and $r.Out -match "no checksum for $([regex]::Escape($asset)) could be found" -and -not (Test-Path (Join-Path $sp 'versions\9.9.4')))
+$r = Invoke-Installer @('-Prefix', $sp, '-Version', '9.9.4') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-only'); HARDCHARGER_INSTALL_SHA256 = $good98 }
 Check 'HARDCHARGER_INSTALL_SHA256 checks it' ($r.Code -eq 0 -and $r.Out -match 'Checksum OK \(HARDCHARGER_INSTALL_SHA256\)')
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.9')
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = 'http://127.0.0.1:9/m'; HARDCHARGER_INSTALL_TEST_INSECURE = ''; HARDCHARGER_INSTALL_GITHUB_WEB = '' }
+$r = Invoke-Installer @('-Prefix', $sp, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = 'http://127.0.0.1:9/m'; HARDCHARGER_INSTALL_TEST_INSECURE = ''; HARDCHARGER_INSTALL_GITHUB_WEB = ''; HARDCHARGER_INSTALL_GITHUB_API = '' }
 Check 'an http mirror needs HARDCHARGER_INSTALL_ALLOW_HTTP' ($r.Code -ne 0 -and $r.Out -match 'is plain http: set .env:HARDCHARGER_INSTALL_ALLOW_HTTP')
 $r = Invoke-Installer @('-Prefix', $prefix) @{ HARDCHARGER_INSTALL_GITHUB_API = 'http://127.0.0.1:9'; HARDCHARGER_INSTALL_TEST_INSECURE = '' }
 Check 'the test-only overrides must be https without the test flag' ($r.Code -ne 0 -and $r.Out -match 'are test settings and must be https://')
