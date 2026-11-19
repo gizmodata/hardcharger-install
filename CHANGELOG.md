@@ -7,6 +7,30 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Security
+
+Fixes from the security review of gizmodata/adbc-install, whose installer was modeled on this one:
+
+- **No install without a checksum.** When a release has no `SHA256SUMS` and GitHub's API didn't
+  give its digest, the installer used to install anyway ("relying on HTTPS alone"); it now refuses
+  and points to `HARDCHARGER_INSTALL_TOKEN` or the new `HARDCHARGER_INSTALL_SHA256`.
+- **A mirror no longer vouches for itself** (F5): `HARDCHARGER_INSTALL_MIRROR`'s tarball is checked
+  against the GitHub release's `SHA256SUMS` over https, not the mirror's own; an `http://` mirror
+  needs `HARDCHARGER_INSTALL_ALLOW_HTTP=1`.
+- **Versions are checked as a whole value** (F6): one with a line break, or non-ASCII digits in
+  `install.ps1`, is refused.
+- **Archives**: a device, pipe, or link to an absolute path or out through `..` is refused (F9);
+  `install.ps1` refuses links in the zip.
+- **https only, through redirects too** (F10): curl now also gets `--proto-redir`, Windows
+  PowerShell 5.1 checks where a download ended, and the test-only GitHub URL overrides refuse
+  `http://` unless `HARDCHARGER_INSTALL_TEST_INSECURE=1`.
+- A test that every cut-short download of `install.sh` runs nothing (F7: the script already
+  runs only from its last lines).
+- **Deploys** (F2, F3, F4): the job holding the AWS session runs nothing it downloads (a separate
+  `verify` job runs the one-liners), every action is pinned to a commit SHA (`check_workflows.py`
+  enforces both), and the deploy runs in the `production` environment, so it waits for Philip's
+  approval; the role trusts that environment's subject.
+
 ### Changed
 
 - **Plain http no longer serves the installer.** `http://install.hardcharger.gizmodata.com/` (and a scheme-less

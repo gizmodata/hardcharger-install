@@ -3,7 +3,11 @@
 # 2. A local mirror of stand-in builds (tiny .exe files that print a version, compiled here;
 #    no real release needed): install, switch, switch back without a download, the Get started
 #    lines, -List, a corrupted zip, a build that doesn't run, the irm | iex form, uninstall one
-#    and all.
+#    and all. The mirror's checksums come from a stand-in for github.com's release downloads
+#    (fake_github.py over the mirror folder), never from the mirror: a mirror's own build with its
+#    own SHA256SUMS is refused, a release with no checksum anywhere is refused unless
+#    HARDCHARGER_INSTALL_SHA256 gives one, and an http mirror needs HARDCHARGER_INSTALL_ALLOW_HTTP.
+#    Also: versions with a line break or a non-ASCII digit, and the https-only test overrides.
 # 3. The GitHub API path against fake_github.py: internal releases with and without a token,
 #    latest, SHA256SUMS and GitHub's digest, a release without a Windows zip ("Windows builds start
 #    with 0.3.0", as a file and through iex), the token kept off the storage host, anonymous public.
@@ -64,6 +68,14 @@ New-StandIn '9.9.9' 0
 New-StandIn '9.9.7' 3
 $mirror = Join-Path $root 'mirror'
 $prefix = Join-Path $root 'hc'
+# github.com's release downloads, for the SHA256SUMS the installer checks a mirror's zip against.
+$py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
+$pfw = Join-Path $root 'web.port'
+$webProc = Start-Process -FilePath $py -ArgumentList @((Join-Path $PSScriptRoot 'fake_github.py'), '--root', $mirror, '--port', '0', '--port-file', $pfw, '--log', (Join-Path $root 'web.log')) -PassThru -WindowStyle Hidden
+foreach ($i in 1..100) { if ((Test-Path $pfw) -and (Get-Content $pfw -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 100 }
+# Every installer run below inherits these (the stand-ins are plain http: the test flag allows that).
+$env:HARDCHARGER_INSTALL_GITHUB_WEB = "http://127.0.0.1:$((Get-Content $pfw).Trim())/web"
+$env:HARDCHARGER_INSTALL_TEST_INSECURE = '1'
 $bin = Join-Path $prefix 'bin'
 function Current { $i = Get-Item -LiteralPath $bin -Force -ErrorAction SilentlyContinue; if ($i) { Split-Path -Leaf (Split-Path -Parent @($i.Target)[0]) } else { '' } }
 
@@ -80,14 +92,43 @@ Check 'switch back to 9.9.9 without a download (env version)' ($r.Code -eq 0 -an
 $r = Invoke-Installer @('-Prefix', $prefix, '-List')
 Check '-List' ($r.Out -match '\* 9\.9\.9 \(current\)' -and $r.Out -match '    9\.9\.8')
 
-$bad = Join-Path $root 'mirror-bad\v9.9.6'
+$bad = Join-Path $root 'mirror-bad\v9.9.8'
 New-Item -ItemType Directory -Force -Path $bad | Out-Null
 Copy-Item (Join-Path $mirror "v9.9.8\$asset") (Join-Path $bad $asset)
 $bytes = [IO.File]::ReadAllBytes((Join-Path $bad $asset)); $bytes[[int]($bytes.Length / 2)] = $bytes[[int]($bytes.Length / 2)] -bxor 0xFF
 [IO.File]::WriteAllBytes((Join-Path $bad $asset), $bytes)
 Copy-Item (Join-Path $mirror 'v9.9.8\SHA256SUMS') (Join-Path $bad 'SHA256SUMS')
-$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.6') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-bad') }
-Check 'corrupted zip refused' ($r.Code -ne 0 -and $r.Out -match "checksum mismatch for ${asset}: SHA256SUMS says" -and (Current) -eq '9.9.9' -and -not (Test-Path (Join-Path $prefix 'versions\9.9.6')))
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-bad') }
+Check 'corrupted zip refused' ($r.Code -ne 0 -and $r.Out -match "checksum mismatch for ${asset}: SHA256SUMS says" -and (Current) -eq '9.9.9')
+# A mirror's own, valid build of 9.9.8 (one file more), with a SHA256SUMS that matches it: the
+# checksums come from GitHub's release, so it is refused.
+$evilBuild = Join-Path $root 'evil-build'
+Copy-Item -Recurse (Join-Path $root "build-9.9.8\hardcharger-windows-$arch") (Join-Path $evilBuild "hardcharger-windows-$arch")
+Set-Content -Path (Join-Path $evilBuild "hardcharger-windows-$arch\NOT-THE-REAL-BUILD.txt") -Value 'x' -Encoding ascii
+$evil = Join-Path $root 'mirror-evil\v9.9.8'
+New-Item -ItemType Directory -Force -Path $evil | Out-Null
+Compress-Archive -Path (Join-Path $evilBuild "hardcharger-windows-$arch") -DestinationPath (Join-Path $evil $asset) -Force
+Set-Content -Path (Join-Path $evil 'SHA256SUMS') -Value "$((Get-FileHash -Algorithm SHA256 (Join-Path $evil $asset)).Hash.ToLowerInvariant())  $asset" -Encoding ascii
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-evil') }
+$good98 = (Get-FileHash -Algorithm SHA256 (Join-Path $mirror "v9.9.8\$asset")).Hash.ToLowerInvariant()
+Check "a mirror's own SHA256SUMS is not trusted" ($r.Code -ne 0 -and $r.Out.Contains("checksum mismatch for ${asset}: SHA256SUMS says $good98") -and (Current) -eq '9.9.9')
+# A version GitHub has no SHA256SUMS for: refused, unless HARDCHARGER_INSTALL_SHA256 gives it.
+$only = Join-Path $root 'mirror-only\v9.9.4'
+New-Item -ItemType Directory -Force -Path $only | Out-Null
+Copy-Item (Join-Path $mirror "v9.9.8\$asset") (Join-Path $only $asset)
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.4') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-only') }
+Check 'no checksum anywhere: refused (no "relying on HTTPS alone")' ($r.Code -ne 0 -and $r.Out -match "no checksum for $([regex]::Escape($asset)) could be found" -and -not (Test-Path (Join-Path $prefix 'versions\9.9.4')))
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.4') @{ HARDCHARGER_INSTALL_MIRROR = (Join-Path $root 'mirror-only'); HARDCHARGER_INSTALL_SHA256 = $good98 }
+Check 'HARDCHARGER_INSTALL_SHA256 checks it' ($r.Code -eq 0 -and $r.Out -match 'Checksum OK \(HARDCHARGER_INSTALL_SHA256\)')
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.9')
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_INSTALL_MIRROR = 'http://127.0.0.1:9/m'; HARDCHARGER_INSTALL_TEST_INSECURE = ''; HARDCHARGER_INSTALL_GITHUB_WEB = '' }
+Check 'an http mirror needs HARDCHARGER_INSTALL_ALLOW_HTTP' ($r.Code -ne 0 -and $r.Out -match 'is plain http: set .env:HARDCHARGER_INSTALL_ALLOW_HTTP')
+$r = Invoke-Installer @('-Prefix', $prefix) @{ HARDCHARGER_INSTALL_GITHUB_API = 'http://127.0.0.1:9'; HARDCHARGER_INSTALL_TEST_INSECURE = '' }
+Check 'the test-only overrides must be https without the test flag' ($r.Code -ne 0 -and $r.Out -match 'are test settings and must be https://')
+foreach ($bv in @("9.9.8`n", ([string][char]0x0661 + '.2.3'))) {
+  $r = Invoke-Installer @('-Prefix', $prefix) @{ HARDCHARGER_VERSION = $bv }
+  Check "a version with a line break or a non-ASCII digit is refused ($([Uri]::EscapeDataString($bv)))" ($r.Code -ne 0 -and $r.Out -match 'must be latest, X.Y.Z or vX.Y.Z' -and (Current) -eq '9.9.9')
+}
 $r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.7') @{ HARDCHARGER_INSTALL_MIRROR = $mirror }
 Check 'a build that does not run is refused' ($r.Code -ne 0 -and $r.Out -match "doesn't run on this system, so it wasn't installed; 9.9.9 is still current" -and (Current) -eq '9.9.9')
 
@@ -121,7 +162,6 @@ Copy-Item (Join-Path $mirror 'v9.9.8\SHA256SUMS') (Join-Path $gh 'v9.9.8\SHA256S
 New-Item -ItemType Directory -Force -Path (Join-Path $gh 'v9.9.5') | Out-Null
 Set-Content -Path (Join-Path $gh 'v9.9.5\hardcharger-linux-amd64.tar.gz') -Value 'not windows'
 $token = "fixture-token-$PID-not-a-secret"
-$py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 $servers = @{}
 foreach ($kind in 'internal', 'public') {
   $pf = Join-Path $root "$kind.port"
@@ -160,8 +200,11 @@ try {
   Check 'public, anonymous: latest installs 9.9.9' ($r.Code -eq 0 -and $r.Out -match 'Installed Hardcharger 9.9.9' -and -not (Get-Content (Join-Path $root 'public.log') | Where-Object { $_ -match 'auth=yes' }))
 } finally {
   foreach ($s in $servers.Values) { Stop-Process -Id $s.Proc.Id -Force -ErrorAction SilentlyContinue }
+  Stop-Process -Id $webProc.Id -Force -ErrorAction SilentlyContinue
 }
 
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 if ($failures) { Write-Host "$failures Windows test(s) failed"; exit 1 }
 Write-Host "all Windows tests passed ($shell)"
+# Explicitly: GitHub's pwsh step exits with $LASTEXITCODE, the last (expected) installer failure's.
+exit 0

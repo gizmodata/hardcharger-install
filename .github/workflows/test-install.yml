@@ -62,13 +62,15 @@ jobs:
     name: Lint and platform unit tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: shellcheck
         run: shellcheck -s sh install.sh .github/scripts/*.sh
       - name: Syntax check with dash and bash
         run: dash -n install.sh && bash -n install.sh
-      - name: fake_github.py compiles
-        run: python3 -m py_compile .github/scripts/fake_github.py
+      - name: Python scripts compile
+        run: python3 -m py_compile .github/scripts/fake_github.py .github/scripts/check_workflows.py
+      - name: Workflows pin every action to a commit SHA, and no credentialed job runs downloaded code
+        run: python3 .github/scripts/check_workflows.py
       - name: Platform checks with fake uname/getconf/ldd (dash, bash)
         run: |
           .github/scripts/platform-tests.sh dash
@@ -96,7 +98,7 @@ jobs:
           - { name: 'macos-arm64 (macos-15; sh)', runner: macos-15, shells: sh }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Every scenario against fixture releases (internal with a token, and public)
         run: |
           for s in ${{ matrix.shells }}; do
@@ -114,7 +116,7 @@ jobs:
           - { name: windows-arm64 (windows-11-arm), runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: PowerShell 7
         shell: pwsh
         run: ./.github/scripts/windows-tests.ps1
@@ -140,11 +142,12 @@ jobs:
     container: ${{ matrix.image }}
     steps:
       - run: command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: 0.2.0 is refused with the glibc explanation, before any download
         env:
           HARDCHARGER_INSTALL_GITHUB_API: http://127.0.0.1:9
           HARDCHARGER_INSTALL_GITHUB_WEB: http://127.0.0.1:9
+          HARDCHARGER_INSTALL_TEST_INSECURE: '1'
         run: |
           set +e
           out="$(HARDCHARGER_VERSION=0.2.0 sh install.sh 2>&1)"; code=$?
@@ -168,7 +171,7 @@ jobs:
           - { name: macos-arm64, runner: macos-15, port: 31440 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Are gizmodata/hardcharger's releases public?
         id: vis
         run: echo "releases=$(.github/scripts/releases-public.sh)" >> "$GITHUB_OUTPUT"
@@ -200,7 +203,7 @@ jobs:
     container: ${{ matrix.image }}
     steps:
       - run: command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Are gizmodata/hardcharger's releases public?
         id: vis
         run: echo "releases=$(.github/scripts/releases-public.sh)" >> "$GITHUB_OUTPUT"
@@ -230,7 +233,7 @@ jobs:
       HARDCHARGER_INSTALL_TOKEN: ${{ github.token }}
       HARDCHARGER_VERSION: ${{ inputs.version || github.event.client_payload.version || '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: PowerShell 7
         shell: pwsh
         run: ./.github/scripts/windows-real-release.ps1

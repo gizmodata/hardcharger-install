@@ -5,11 +5,17 @@ name: Deploy
 # CloudFront, invalidate the cache, and check the live https URLs serve exactly these files (plain
 # http serves only the https-only stub).
 #
-# AWS access is GitHub OIDC to a role that trusts only this repo's main branch (the `sub` claim
-# carries the org and repo IDs: repo:gizmodata@181902052/hardcharger-install@1423709869:ref:refs/heads/main)
-# and may only write the bucket and invalidate the distribution. The role, bucket and
-# distribution are in gizmodata-infrastructure-terraform, aws/dns/hardcharger_install.tf.
-# No GitHub `environment:` here: it would change the `sub` claim the role trusts.
+# AWS access is GitHub OIDC to a role, from the `deploy` job running in the `production`
+# environment, which waits for Philip's approval (required reviewer prmoore77; admins may bypass;
+# main only). The role trusts that environment's `sub` claim
+# (repo:gizmodata@181902052/hardcharger-install@1423709869:environment:production) and may only
+# write the bucket and invalidate the distribution. The role, bucket and distribution are in
+# gizmodata-infrastructure-terraform, aws/dns/hardcharger_install.tf. GitHub records each
+# deployment to the environment itself.
+#
+# Two jobs, so the AWS session never meets downloaded code (security review F2): `deploy` only
+# checks out, uploads, invalidates and byte-compares the live files; `verify` (no id-token) runs
+# the served one-liners.
 
 on:
   push:
@@ -36,27 +42,22 @@ jobs:
   tests:
     uses: ./.github/workflows/test-install.yml
 
+  # Holds the AWS session, so it runs nothing it downloads (security review F2): checkout, upload,
+  # invalidate, and byte-compare the live files with curl and cmp. `verify` runs the one-liners.
   deploy:
     needs: tests
     runs-on: ubuntu-24.04
+    # Waits for Philip's approval; the deploy role trusts this environment's `sub` claim.
+    environment:
+      name: production
+      url: https://install.hardcharger.gizmodata.com
     permissions:
       contents: read
       id-token: write
-      deployments: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Deployment record (in progress)
-        id: deployment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          id=$(gh api "repos/$GITHUB_REPOSITORY/deployments" -X POST -f ref="$GITHUB_SHA" -f environment=production \
-            -F auto_merge=false -f 'required_contexts[]' -f description="install.sh and install.ps1 to $HOST" --jq .id)
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-          gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" -X POST -f state=in_progress >/dev/null
-
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -117,6 +118,14 @@ jobs:
           echo "::error::the live installer didn't match this commit after 10 minutes"
           exit 1
 
+  # Runs what the live site serves: no id-token here, so nothing it downloads can reach AWS.
+  verify:
+    needs: deploy
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The served one-liner runs (--help over a pipe)
         run: curl -sS "https://$HOST" | sh -s -- --help | grep -F "Hardcharger installer"
 
@@ -128,12 +137,3 @@ jobs:
             if out=$(curl -sS "$url" | sh -s -- --help 2>&1); then echo "$out"; echo "::error::$url | sh exited 0"; exit 1; fi
             echo "$out" | grep -F "error: use https://$HOST/"
           done
-
-      - name: Deployment record (result)
-        if: always() && steps.deployment.outputs.id
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/deployments/${{ steps.deployment.outputs.id }}/statuses" -X POST \
-            -f state="$STATE" -f environment_url="https://$HOST" >/dev/null

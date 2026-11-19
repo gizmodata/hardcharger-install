@@ -5,7 +5,9 @@
 # one "public" (anonymous). Covered: latest and pinned installs with a token and anonymously,
 # the token going to the API but never to the storage host, GH_TOKEN and `gh auth token`,
 # downgrade, switching back without a download, the Get started lines, --list, SHA256SUMS and
-# GitHub's digest (good, corrupted, missing a line, wrong digest, neither published), a build that
+# GitHub's digest (good, corrupted, missing a line, wrong digest, neither: refused unless
+# HARDCHARGER_INSTALL_SHA256), a mirror's own SHA256SUMS not trusted, a version with a line break,
+# a pipe or an outward link in the archive, the https-only test overrides, a cut-short script, a build that
 # doesn't run, a release without this platform's asset, an unknown version, --modify-path,
 # --prefix, and every uninstall.
 #
@@ -26,9 +28,10 @@ export HOME="$ROOT/home"
 mkdir -p "$HOME"
 P="$HOME/.hardcharger"
 OUT="$ROOT/out"
-unset HARDCHARGER_INSTALL_TOKEN GH_TOKEN HARDCHARGER_VERSION HARDCHARGER_PREFIX HARDCHARGER_INSTALL_MIRROR 2>/dev/null || true
+unset HARDCHARGER_INSTALL_TOKEN GH_TOKEN HARDCHARGER_VERSION HARDCHARGER_PREFIX HARDCHARGER_INSTALL_MIRROR HARDCHARGER_INSTALL_SHA256 HARDCHARGER_INSTALL_ALLOW_HTTP 2>/dev/null || true
 # Nothing here may reach the real GitHub: a step that names no fake server gets a dead one.
-export HARDCHARGER_INSTALL_GITHUB_API=http://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=http://127.0.0.1:9
+# The stand-ins are plain http, which the installer allows only with the test flag.
+export HARDCHARGER_INSTALL_GITHUB_API=http://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=http://127.0.0.1:9 HARDCHARGER_INSTALL_TEST_INSECURE=1
 
 step() { printf '\n### %s\n' "$*"; }
 fail() { echo "::error::$*"; [ -f "$OUT" ] && sed 's/^/  | /' "$OUT"; exit 1; }
@@ -270,16 +273,83 @@ expect_not "releases are internal"
 
 step "16. Public, anonymous, and the API refuses (rate limit): web fallbacks"
 rl="HARDCHARGER_INSTALL_GITHUB_API=http://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=$public_URL/web"
+# 1.1.0 has no SHA256SUMS, and its GitHub digest is only in the API's answer: with the API refusing,
+# no checksum can be found, so nothing is installed (it used to install, "relying on HTTPS alone").
 # shellcheck disable=SC2086
-run 0 $rl $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-rl" --
+run nonzero $rl $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-rl" --
+expect "no checksum for $ASSET could be found"
+[ ! -e "$ROOT/anon-rl/versions/1.1.0" ] || fail "1.1.0 was installed without a checksum"
+# shellcheck disable=SC2086
+run 0 $rl $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-rl" HARDCHARGER_INSTALL_SHA256="$(sum "$F/v1.1.0/$ASSET")" --
+expect "Checksum OK (HARDCHARGER_INSTALL_SHA256)"
 expect "Installed Hardcharger 1.1.0"
-expect "no checksum is published for $ASSET"
+# shellcheck disable=SC2086
+run nonzero $rl $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-rl2" HARDCHARGER_INSTALL_SHA256=1111111111111111111111111111111111111111111111111111111111111111 --
+expect "checksum mismatch for $ASSET: HARDCHARGER_INSTALL_SHA256 says 1111111111111111111111111111111111111111111111111111111111111111"
 # shellcheck disable=SC2086
 run 0 $rl $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-rl" HARDCHARGER_VERSION=1.0.0 --
 expect "Checksum OK (SHA256SUMS)"
 # shellcheck disable=SC2086
 run nonzero $rl $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/anon-rl" HARDCHARGER_VERSION=1.0.2 --
 expect "checksum mismatch for $ASSET: SHA256SUMS says"
+
+# ---- the security review's findings (F5-F7, F9, F10) ----------------------------------------------
+step "16a. A mirror's own SHA256SUMS is not trusted: its build of 1.0.0 is checked against the release's"
+EM="$ROOT/evil-mirror/v1.0.0"; mkdir -p "$EM"
+# A valid build, but not the release's: 1.0.0 plus a file of the mirror's own.
+mkdir -p "$ROOT/evil-build"; cp -R "$ROOT/build/1.0.0/hardcharger-$PLATFORM" "$ROOT/evil-build/"
+echo "NOT-THE-REAL-BUILD" > "$ROOT/evil-build/hardcharger-$PLATFORM/lib/evil.txt"
+tar -czf "$EM/$ASSET" -C "$ROOT/evil-build" "hardcharger-$PLATFORM"
+echo "$(sum "$EM/$ASSET")  $ASSET" > "$EM/SHA256SUMS"
+# shellcheck disable=SC2086
+run nonzero $PUBLIC $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/mirror-p" HARDCHARGER_VERSION=1.0.0 HARDCHARGER_INSTALL_MIRROR="$ROOT/evil-mirror" --
+expect "checksum mismatch for $ASSET: SHA256SUMS says $(sum "$F/v1.0.0/$ASSET")"
+[ ! -e "$ROOT/mirror-p/versions/1.0.0" ] || fail "the mirror's build was installed"
+# shellcheck disable=SC2086
+run nonzero $PUBLIC $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/mirror-p" HARDCHARGER_VERSION=1.0.0 HARDCHARGER_INSTALL_TEST_INSECURE= HARDCHARGER_INSTALL_GITHUB_API=https://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=https://127.0.0.1:9 HARDCHARGER_INSTALL_MIRROR=http://127.0.0.1:9/m --
+expect "HARDCHARGER_INSTALL_MIRROR http://127.0.0.1:9/m is plain http: set HARDCHARGER_INSTALL_ALLOW_HTTP=1"
+
+step "16b. A version must be one line of [0-9A-Za-z.+-]: a line break is refused"
+set +e
+env "HARDCHARGER_VERSION=$(printf '1.0.0\nx')" HARDCHARGER_PREFIX="$ROOT/v-p" "$SH" -s < "$INSTALLER" > "$OUT" 2>&1; code=$?
+set -e
+sed 's/^/  | /' "$OUT"
+[ "$code" != 0 ] || fail "a version with a line break was accepted"
+expect "must be latest, X.Y.Z or vX.Y.Z"
+
+step "16c. An archive holding a device-like entry or a link out of the build is refused"
+# 1.0.5: a named pipe; 1.0.6: a link to an absolute path; both with a good SHA256SUMS.
+for v in 1.0.5 1.0.6; do
+  d="$ROOT/build/$v/hardcharger-$PLATFORM"; mkdir -p "$d/bin" "$d/lib"
+  printf '#!/bin/sh\necho "Hardcharger %s"\n' "$v" > "$d/bin/hardcharger-server"; chmod +x "$d/bin/hardcharger-server"
+  if [ "$v" = 1.0.5 ]; then mkfifo "$d/lib/pipe"; else ln -s /etc/passwd "$d/lib/passwd"; fi
+  mkdir -p "$F/v$v"; tar -czf "$F/v$v/$ASSET" -C "$ROOT/build/$v" "hardcharger-$PLATFORM"; sums "$v"
+done
+# shellcheck disable=SC2086
+run nonzero $PUBLIC $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/odd-p" HARDCHARGER_VERSION=1.0.5 --
+expect "lib/pipe, which is not a regular file, folder or link; not installing it"
+# shellcheck disable=SC2086
+run nonzero $PUBLIC $NO_TOKEN HARDCHARGER_PREFIX="$ROOT/odd-p" HARDCHARGER_VERSION=1.0.6 --
+expect "lib/passwd, a link to /etc/passwd outside the build; not installing it"
+[ ! -e "$ROOT/odd-p/versions/1.0.6" ] || fail "an archive with a link out of the build was installed"
+
+step "16d. The test-only GitHub overrides must be https without the test flag"
+run nonzero HARDCHARGER_INSTALL_TEST_INSECURE= HARDCHARGER_VERSION=1.0.0 --
+expect "HARDCHARGER_INSTALL_GITHUB_API and _WEB are test settings and must be https:// (got http://127.0.0.1:9)"
+
+step "16e. A download cut short at any line runs nothing (curl | sh runs what has arrived)"
+lines="$(wc -l < "$INSTALLER" | tr -d ' ')"
+ls -la "$P" > "$ROOT/prefix.before" 2>&1 || true
+n=1
+while [ "$n" -lt "$lines" ]; do
+  # shellcheck disable=SC2086
+  head -n "$n" "$INSTALLER" | env $PUBLIC $NO_TOKEN "$SH" > "$OUT" 2>&1 || true
+  if grep -q -e Downloading -e Installed -e Switched -e Removed "$OUT"; then fail "the first $n lines did something"; fi
+  n=$((n + 1))
+done
+ls -la "$P" > "$ROOT/prefix.after" 2>&1 || true
+cmp -s "$ROOT/prefix.before" "$ROOT/prefix.after" || fail "a cut-short script changed $P"
+echo "  every prefix of the $lines lines ran nothing"
 
 # ---- PATH, prefix, uninstall ---------------------------------------------------------------------
 step "17. --modify-path (bash), twice: one line"

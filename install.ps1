@@ -36,8 +36,13 @@
 .NOTES
     $env:HARDCHARGER_INSTALL_TOKEN  GitHub token that can read gizmodata/hardcharger's releases
                                     (falls back to $env:GH_TOKEN, then `gh auth token`; "none" = anonymous)
-    $env:HARDCHARGER_INSTALL_MIRROR directory or URL laid out like the releases (vX.Y.Z\<asset>)
-    $env:HARDCHARGER_INSTALL_GITHUB_API for tests: GitHub's API base URL (default https://api.github.com)
+    $env:HARDCHARGER_INSTALL_MIRROR directory or https:// URL laid out like the releases (vX.Y.Z\<asset>);
+                                    the zip is still checked against the GitHub release's SHA256SUMS
+    $env:HARDCHARGER_INSTALL_SHA256 the zip's SHA-256, for a machine that can't reach github.com
+    $env:HARDCHARGER_INSTALL_ALLOW_HTTP = '1'  let HARDCHARGER_INSTALL_MIRROR be a plain http:// URL
+    $env:HARDCHARGER_INSTALL_GITHUB_API, $env:HARDCHARGER_INSTALL_GITHUB_WEB
+                                    for tests: GitHub's API and web base URLs; plain http needs
+                                    $env:HARDCHARGER_INSTALL_TEST_INSECURE = '1' as well
 
 .LINK
     https://github.com/gizmodata/hardcharger-install
@@ -59,6 +64,7 @@ $Repo = 'gizmodata/hardcharger'
 # For tests only: another GitHub API base (fake_github.py); the default is the real one.
 $GhApi = if ($env:HARDCHARGER_INSTALL_GITHUB_API) { $env:HARDCHARGER_INSTALL_GITHUB_API.TrimEnd('/') } else { 'https://api.github.com' }
 $Api = "$GhApi/repos/$Repo"
+$GhWeb = if ($env:HARDCHARGER_INSTALL_GITHUB_WEB) { $env:HARDCHARGER_INSTALL_GITHUB_WEB.TrimEnd('/') } else { 'https://github.com' }
 $InstallUrl = 'https://install.hardcharger.gizmodata.com'
 # Run as a file, a failure exits non-zero; piped into iex, it throws (exit would close the window).
 $RunAsFile = [bool]$PSCommandPath
@@ -69,11 +75,25 @@ function Fail([string]$m) { $e = New-Object System.Exception $m; $e.Data['hardch
 
 function Get-NormalVersion([string]$v) {
   if (-not $v -or $v -eq 'latest') { return 'latest' }
-  $n = $v -replace '^v', ''
-  if ($n -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$') {
+  $n = $v -creplace '^v', ''
+  # ASCII digits ([0-9], not \d) and \z (not $, which also matches before a final line break).
+  if ($n -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?\z') {
     Fail "HARDCHARGER_VERSION/-Version must be latest, X.Y.Z or vX.Y.Z (got '$v')"
   }
   return $n
+}
+
+# Downloads $url to $file. Windows PowerShell 5.1 follows a redirect from https to http, so an https
+# download must also end on https (5.1 has BaseResponse.ResponseUri, PowerShell 7 the request's URI).
+function Save-Url([string]$url, [string]$file, [hashtable]$headers = @{}) {
+  $r = Invoke-WebRequest -Uri $url -Headers $headers -OutFile $file -UseBasicParsing -PassThru
+  $final = $null
+  try { $final = $r.BaseResponse.ResponseUri } catch {}
+  if (-not $final) { try { $final = $r.BaseResponse.RequestMessage.RequestUri } catch {} }
+  if ($url -like 'https://*' -and $final -and $final.Scheme -ne 'https') {
+    Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+    Fail "the download of $url was redirected to plain http ($final); not using it"
+  }
 }
 
 function Get-CurrentVersion([string]$bin) {
@@ -148,6 +168,11 @@ function Test-Build([string]$dir, [string]$ver) {
 }
 
 function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
+  foreach ($u in @($GhApi, $GhWeb)) {
+    if ($u -like 'http://*') {
+      if ($env:HARDCHARGER_INSTALL_TEST_INSECURE -ne '1') { Fail "HARDCHARGER_INSTALL_GITHUB_API and _WEB are test settings and must be https:// (got $u)" }
+    } elseif ($u -notlike 'https://*') { Fail "HARDCHARGER_INSTALL_GITHUB_API and _WEB must be https:// URLs (got $u)" }
+  }
   $versions = Join-Path $prefixDir 'versions'
   $bin = Join-Path $prefixDir 'bin'
   $arch = Get-Arch
@@ -200,13 +225,24 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
       if ($mirror) {
         Info "Downloading Hardcharger $ver for $platform ($asset) from the mirror"
         $base = $mirror.TrimEnd('/', '\')
+        if ($base -like 'http://*') {
+          if ($env:HARDCHARGER_INSTALL_ALLOW_HTTP -ne '1' -and $env:HARDCHARGER_INSTALL_TEST_INSECURE -ne '1') {
+            Fail "HARDCHARGER_INSTALL_MIRROR $base is plain http: set `$env:HARDCHARGER_INSTALL_ALLOW_HTTP = '1' to download from it (the zip is still checked against the GitHub release's SHA256SUMS)"
+          }
+        } elseif ($base -match '^[a-z]+://' -and $base -notlike 'https://*') {
+          Fail "HARDCHARGER_INSTALL_MIRROR must be a directory or an https:// URL (got $base)"
+        }
         if ($base -match '^[a-z]+://') {
-          try { Invoke-WebRequest -Uri "$base/$tag/$asset" -OutFile $zip -UseBasicParsing } catch { Fail "the mirror has no $tag/$asset" }
-          try { Invoke-WebRequest -Uri "$base/$tag/SHA256SUMS" -OutFile $sums -UseBasicParsing; $haveSums = $true } catch { $haveSums = $false }
+          try { Save-Url "$base/$tag/$asset" $zip } catch { if ($_.Exception.Data['hardcharger']) { throw }; Fail "the mirror has no $tag/$asset" }
         } else {
           if (-not (Test-Path -LiteralPath (Join-Path $base "$tag\$asset"))) { Fail "the mirror has no $tag\$asset" }
           Copy-Item -LiteralPath (Join-Path $base "$tag\$asset") -Destination $zip
-          if (Test-Path -LiteralPath (Join-Path $base "$tag\SHA256SUMS")) { Copy-Item -LiteralPath (Join-Path $base "$tag\SHA256SUMS") -Destination $sums; $haveSums = $true }
+        }
+        # The checksums come from the GitHub release, never from the mirror, which must not vouch
+        # for its own files.
+        if (-not $env:HARDCHARGER_INSTALL_SHA256) {
+          try { Save-Url "$GhWeb/$Repo/releases/download/$tag/SHA256SUMS" $sums; $haveSums = $true }
+          catch { if ($_.Exception.Data['hardcharger']) { throw }; $haveSums = $false }
         }
       } else {
         if (-not $release) {
@@ -222,13 +258,20 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
         if ($headers.ContainsKey('Authorization')) { $dl['Authorization'] = $headers['Authorization'] }
         Info "Downloading Hardcharger $ver for $platform ($asset)"
         # Both PowerShells drop the Authorization header when the API redirects to the storage host.
-        Invoke-WebRequest -Uri $a.url -Headers $dl -OutFile $zip -UseBasicParsing
+        Save-Url $a.url $zip $dl
         $s = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS' })[0]
-        if ($s) { Invoke-WebRequest -Uri $s.url -Headers $dl -OutFile $sums -UseBasicParsing; $haveSums = $true }
+        if ($s) { Save-Url $s.url $sums $dl; $haveSums = $true }
       }
 
       $have = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
       $checked = @()
+      if ($env:HARDCHARGER_INSTALL_SHA256) {
+        $wantSum = $env:HARDCHARGER_INSTALL_SHA256.ToLowerInvariant()
+        if ($wantSum -cnotmatch '^[0-9a-f]{64}\z') { Fail 'HARDCHARGER_INSTALL_SHA256 must be 64 hexadecimal digits' }
+        if ($have -ne $wantSum) { Fail "checksum mismatch for ${asset}: HARDCHARGER_INSTALL_SHA256 says $wantSum, the download is $have. Nothing was changed." }
+        $checked += 'HARDCHARGER_INSTALL_SHA256'
+        $haveSums = $false; $digest = ''
+      }
       if ($haveSums) {
         $line = Get-Content -LiteralPath $sums | Where-Object { ($_ -split '\s+', 2)[1] -replace '^\*', '' -eq $asset } | Select-Object -First 1
         if (-not $line) { Fail "the release's SHA256SUMS has no line for $asset; not installing it" }
@@ -241,10 +284,13 @@ function Invoke-Install([string]$prefixDir, [string]$want, [bool]$modifyPath) {
         $checked += "GitHub's asset digest"
       }
       if ($checked.Count) { Info "Checksum OK ($($checked -join ' and ')): $have" }
-      else { Warn "no checksum is published for $asset; relying on HTTPS alone" }
+      else { Fail "no checksum for $asset could be found (no SHA256SUMS in the GitHub release, and no digest from its API), so it wasn't installed. Set `$env:HARDCHARGER_INSTALL_SHA256 to the zip's SHA-256, or try again later." }
 
       $x = Join-Path $work 'x'
       Expand-Archive -LiteralPath $zip -DestinationPath $x
+      # Only regular files and folders: no links (reparse points).
+      $odd = @(Get-ChildItem -LiteralPath $x -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) | Select-Object -First 1
+      if ($odd) { Fail "$asset holds $($odd.FullName.Substring($x.Length + 1)), which is a link; not installing it" }
       $top = Join-Path $x "hardcharger-$platform"
       if (-not (Test-Path -LiteralPath $top)) { $top = $x }
       if (-not (Test-Path -LiteralPath (Join-Path $top 'bin\hardcharger-server.exe'))) { Fail "$asset has no bin\hardcharger-server.exe; not installing it" }
