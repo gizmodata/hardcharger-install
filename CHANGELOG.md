@@ -7,6 +7,16 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Changed
+
+- **Plain http no longer serves the installer.** `http://install.hardcharger.gizmodata.com/` (and a scheme-less
+  `curl install.hardcharger.gizmodata.com | sh`) answers 200 with a one-line stub,
+  `echo 'error: use https://install.hardcharger.gizmodata.com/ …' >&2; exit 1` (`throw '…'` for `/install.ps1`), from a
+  CloudFront Function (gizmodata-infrastructure-terraform `aws/dns/installers_https_only.tf`), so a piped http
+  one-liner fails loudly instead of running a script anyone on the path could have swapped. The README no longer
+  says plain http works; the deploy checks that https serves these exact files, http only the stub, and that
+  `curl http://… | sh` exits non-zero.
+
 ### Fixed
 
 - The installers no longer say "While the releases are internal, set HARDCHARGER_INSTALL_TOKEN…":

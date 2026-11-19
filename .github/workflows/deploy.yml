@@ -2,7 +2,8 @@ name: Deploy
 
 # Every push to main: run the full installer tests, and only if they pass, publish install.sh
 # (served at https://install.hardcharger.gizmodata.com/) and install.ps1 to the S3 bucket behind
-# CloudFront, invalidate the cache, and check the live URLs serve exactly these files.
+# CloudFront, invalidate the cache, and check the live https URLs serve exactly these files (plain
+# http serves only the https-only stub).
 #
 # AWS access is GitHub OIDC to a role that trusts only this repo's main branch (the `sub` claim
 # carries the org and repo IDs: repo:gizmodata@181902052/hardcharger-install@1423709869:ref:refs/heads/main)
@@ -73,8 +74,10 @@ jobs:
           aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" \
             --paths / /install.sh /install.ps1 --query Invalidation.Id --output text
 
-      # Plain curl with no -L, over https and http, as the documented one-liners run it.
-      - name: The live URLs serve these exact files
+      # Plain curl with no -L, as the documented one-liners run it. https serves these exact files;
+      # plain http never serves a script, only CloudFront's stub (gizmodata-infrastructure-terraform
+      # aws/dns/installers_https_only.tf), which prints the https URL and exits non-zero.
+      - name: The live URLs serve these exact files (https) and only the stub (http)
         run: |
           check() {
             url="$1"; file="$2"
@@ -84,12 +87,29 @@ jobs:
             cmp -s "$RUNNER_TEMP/body" "$file" || { echo "$url: not this commit's $file yet"; return 1; }
             echo "$url: 200, text/plain, matches $file"
           }
+          # http: 200 text/plain, no redirect, and exactly the stub for that path.
+          stub() {
+            path="$1"
+            case "$path" in
+              *.ps1) want="throw 'use https://$HOST$path (this installer is served over https only)'" ;;
+              *) want="echo 'error: use https://$HOST$path (this installer is served over https only)' >&2; exit 1" ;;
+            esac
+            url="http://$HOST$path"
+            code=$(curl -sS -o "$RUNNER_TEMP/body" -D "$RUNNER_TEMP/headers" -w '%{http_code}' "$url") || return 1
+            [ "$code" = 200 ] || { echo "$url: HTTP $code"; return 1; }
+            grep -qi '^content-type: text/plain' "$RUNNER_TEMP/headers" || { echo "$url: not text/plain"; return 1; }
+            if grep -qi '^location:' "$RUNNER_TEMP/headers"; then echo "$url: redirects"; return 1; fi
+            printf '%s\n' "$want" | cmp -s - "$RUNNER_TEMP/body" || { echo "$url: not the https-only stub"; return 1; }
+            echo "$url: 200, text/plain, the https-only stub"
+          }
           for _ in $(seq 1 60); do
             ok=1
-            for pair in "https://$HOST/ install.sh" "http://$HOST/ install.sh" "https://$HOST/install.sh install.sh" \
-                        "https://$HOST/install.ps1 install.ps1" "http://$HOST/install.ps1 install.ps1"; do
+            for pair in "https://$HOST/ install.sh" "https://$HOST/install.sh install.sh" "https://$HOST/install.ps1 install.ps1"; do
               # shellcheck disable=SC2086
               check $pair || ok=0
+            done
+            for path in / /install.sh /install.ps1; do
+              stub "$path" || ok=0
             done
             [ "$ok" = 1 ] && exit 0
             sleep 10
@@ -99,6 +119,15 @@ jobs:
 
       - name: The served one-liner runs (--help over a pipe)
         run: curl -sS "https://$HOST" | sh -s -- --help | grep -F "Hardcharger installer"
+
+      # Plain http (and a scheme-less URL, which curl takes as http) runs only the stub: it prints the
+      # https URL and exits non-zero.
+      - name: A plain-http one-liner fails with the https URL
+        run: |
+          for url in "http://$HOST" "$HOST"; do
+            if out=$(curl -sS "$url" | sh -s -- --help 2>&1); then echo "$out"; echo "::error::$url | sh exited 0"; exit 1; fi
+            echo "$out" | grep -F "error: use https://$HOST/"
+          done
 
       - name: Deployment record (result)
         if: always() && steps.deployment.outputs.id
