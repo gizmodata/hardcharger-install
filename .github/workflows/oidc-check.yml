@@ -17,6 +17,10 @@ permissions:
 
 jobs:
   check:
+    # In the production environment, as the deploy job will be: the token's `sub` claim is then
+    # repo:gizmodata@181902052/hardcharger-install@1423709869:environment:production, which the
+    # deploy role must trust. The environment needs Philip's approval, so this waits for it.
+    environment: production
     runs-on: ubuntu-24.04
     steps:
       - name: The token's claims
