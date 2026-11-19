@@ -30,8 +30,10 @@ curl https://install.hardcharger.gizmodata.com | sh                             
 curl https://install.hardcharger.gizmodata.com | HARDCHARGER_VERSION=0.2.0 sh    # a given version
 ```
 
-Plain `http://` works too, and neither needs `-L`: the script itself is served at `/`, as
-`text/plain`.
+Neither needs `-L`: the script itself is served at `/`, as `text/plain`. Use `https://`: plain
+`http://` (and a URL typed without a scheme, which curl takes as http) never serves the script, only a
+one-line stub that prints the https URL and exits non-zero, because anyone on the network path could
+swap a script sent over http.
 
 **Windows (PowerShell)**
 
