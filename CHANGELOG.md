@@ -7,6 +7,34 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+### Added
+
+- **The baseline Linux x86-64 build** (gizmodata/hardcharger#62). From Hardcharger 2.13.2 on,
+  every release also has `hardcharger-linux-amd64-baseline.tar.gz`, built for any x86-64 CPU, for
+  machines the optimized build (x86-64-v3: AVX2) stops on with "Illegal instruction", such as a VM
+  with QEMU's `kvm64` CPU model. `install.sh` takes `--cpu-target <auto|optimized|baseline>` and
+  `HARDCHARGER_CPU_TARGET` (the Python package's setting, same values). `auto`, the default, reads
+  the first `flags` line of `/proc/cpuinfo` on Linux x86-64 only, and installs the baseline build
+  when one of `cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe
+  xsave` is missing, saying which, that it is slower, that a VM's CPU model can hide the host's
+  features, and how to choose; when `/proc/cpuinfo` can't be read, the optimized build. Capable CPUs
+  and the other platforms see no change. `baseline` on macOS, Linux arm64 or Windows (`install.ps1
+  -CpuTarget`, which accepts `auto` and `optimized`) is an error, and so is `baseline` for a version
+  before 2.13.2 ("the baseline build is released from 2.13.2 on"). For such a version `auto` tries
+  the optimized build and installs it only if it runs: Docker's x86-64 emulation on Apple silicon
+  lists no `abm` or `xsave` in `/proc/cpuinfo` yet runs it, and on a CPU that really lacks them the
+  build dies of SIGILL in its `--version` check, which now says why and points to 2.13.2's
+  baseline build. The baseline tarball is checked like the optimized one (`SHA256SUMS`, GitHub's
+  digest, `HARDCHARGER_INSTALL_MIRROR`, `HARDCHARGER_INSTALL_SHA256`).
+- A baseline install is marked by `versions/<v>/.hardcharger-build` (written by the installer only;
+  one in a tarball is removed). A directory without it, as every earlier install, holds the
+  optimized build. Asking for the other build of an installed version downloads it and replaces
+  the one installed (a failed download or check keeps it); switching between installed versions
+  still downloads nothing. `--list` marks baseline builds `(baseline)`.
+- `HARDCHARGER_INSTALL_TEST_CPUINFO`, for tests: a file read in place of `/proc/cpuinfo`. The
+  fixture tests run the CPU-target scenarios on every host as Linux x86-64 (a fake `uname`), and the
+  real-release check installs, queries and replaces 2.13.2's baseline build on Linux x86-64.
+
 ## [0.3.0] - 2026-11-19
 
 ### Security

@@ -30,6 +30,26 @@ curl https://install.hardcharger.gizmodata.com | sh                             
 curl https://install.hardcharger.gizmodata.com | HARDCHARGER_VERSION=0.2.0 sh    # a given version
 ```
 
+**Linux x86-64 has two builds.** The optimized one (`hardcharger-linux-amd64.tar.gz`) needs an
+x86-64-v3 CPU (AVX2: Intel Haswell, AMD Excavator or newer). The baseline one
+(`hardcharger-linux-amd64-baseline.tar.gz`, released from Hardcharger 2.13.2 on) runs on any x86-64
+CPU, such as a virtual machine whose CPU model hides AVX2 (QEMU's and Proxmox's `kvm64`), but slower.
+The installer reads the first `flags` line of `/proc/cpuinfo` and installs the baseline build only
+when a feature the optimized one needs is missing, and says which ones and why. On a VM, setting
+the CPU model to `host` (or `x86-64-v3`) is often the better fix. To choose yourself:
+
+```bash
+curl https://install.hardcharger.gizmodata.com | sh -s -- --cpu-target baseline     # or optimized
+curl https://install.hardcharger.gizmodata.com | HARDCHARGER_CPU_TARGET=baseline sh
+```
+
+`HARDCHARGER_CPU_TARGET` is the same setting the Python package (`pip install hardcharger`) reads.
+`baseline` on any other platform is an error (each has one build), and so is `baseline` for a
+version before 2.13.2. When `auto` finds features missing and the version is older than 2.13.2, the
+installer tries that version's optimized build and installs it only if it runs (an emulator, such
+as Docker's x86-64 emulation on Apple silicon, runs it without listing every feature); on a CPU that
+really lacks them, nothing changes and the message says to install 2.13.2 or newer.
+
 Neither needs `-L`: the script itself is served at `/`, as `text/plain`. Use `https://`: plain
 `http://` (and a URL typed without a scheme, which curl takes as http) never serves the script, only a
 one-line stub that prints the https URL and exits non-zero, because anyone on the network path could
@@ -80,7 +100,8 @@ curl https://install.hardcharger.gizmodata.com | sh -s -- --uninstall           
 |---|---|---|
 | `--version <v>` | `HARDCHARGER_VERSION` | `latest` (default), `X.Y.Z` or `vX.Y.Z` |
 | `--prefix <dir>` | `HARDCHARGER_PREFIX` | install root, default `~/.hardcharger` |
-| `--list` | | installed versions, the current one starred |
+| `--cpu-target <t>` | `HARDCHARGER_CPU_TARGET` | Linux x86-64: `auto` (default: optimized, or baseline when `/proc/cpuinfo` lacks a feature the optimized build needs), `optimized` or `baseline` (2.13.2 on) |
+| `--list` | | installed versions, the current one starred, baseline builds marked `(baseline)` |
 | `--uninstall [<v>]` | | remove one version, or the whole prefix |
 | `--modify-path` | | add `<prefix>/bin` to your shell's startup file (otherwise the line is only printed) |
 | | `HARDCHARGER_INSTALL_TOKEN` | optional GitHub token for the API requests (default: `GH_TOKEN`, then `gh auth token`); `none` sends no token |
@@ -89,7 +110,13 @@ curl https://install.hardcharger.gizmodata.com | sh -s -- --uninstall           
 | | `HARDCHARGER_INSTALL_ALLOW_HTTP=1` | allow a plain `http://` mirror (checked the same way) |
 
 `install.ps1` takes the same options as `-Version`, `-Prefix`, `-List`, `-Uninstall [-Version v]`
-and `-ModifyPath`.
+and `-ModifyPath`. Windows has one build for every CPU: `-CpuTarget` (or `HARDCHARGER_CPU_TARGET`)
+accepts `auto` and `optimized`, and refuses `baseline` with that explanation.
+
+Switching to an installed version downloads nothing, as long as it is the build this run asks for:
+asking for the other build of an installed version (`--cpu-target`, or `auto` on a CPU that now
+finds features missing or present) downloads that build and replaces the one installed. A failed
+download or check keeps the installed one.
 
 ## 🏁 Get started
 
@@ -111,12 +138,14 @@ client (0.3.0 on) accepts it. The client line appears only for versions that shi
 ~/.hardcharger/
 ├── versions/
 │   ├── 0.1.2/   bin/ lib/ …    every installed version, as its release tarball has it
-│   └── 0.2.0/   bin/ lib/ …
+│   ├── 0.2.0/   bin/ lib/ …
+│   └── 2.13.2/  bin/ lib/ … .hardcharger-build   a baseline build: the installer writes "baseline" there
 └── bin/
     └── hardcharger-server -> ../versions/0.2.0/bin/hardcharger-server   (and hardcharger, when the version has it)
 ```
 
-Put `~/.hardcharger/bin` on your `PATH` (the installer prints the exact line). On Windows,
+A version directory without `.hardcharger-build` (every install before 2.13.2's baseline build
+existed) holds the optimized build. Put `~/.hardcharger/bin` on your `PATH` (the installer prints the exact line). On Windows,
 `%USERPROFILE%\.hardcharger\bin` is a junction to the current version's `bin\`.
 
 ## 🛡️ What it checks
@@ -127,6 +156,11 @@ Put `~/.hardcharger/bin` on your `PATH` (the installer prints the exact line). O
   and from 0.3.0 on the Linux builds are built in manylinux_2_28 and need glibc 2.28 (Debian 12,
   Raspberry Pi OS Bookworm, RHEL/Oracle Linux 8, Ubuntu 20.04). This is a table in `install.sh`,
   since releases don't publish it.
+- **The CPU, on Linux x86-64.** It reads `/proc/cpuinfo`'s `flags` for the x86-64-v3 features
+  the optimized build needs (`cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c
+  fma abm movbe xsave`) and installs the baseline build when one is missing (see Install). If it
+  can't read them, it installs the optimized build, which from 2.13.2 on checks the CPU itself
+  and names the baseline build instead of stopping with "Illegal instruction".
 - **The download.** It checks the tarball against the release's `SHA256SUMS` when the release
   has one, and against GitHub's own SHA-256 digest of the asset, both from GitHub (also when the
   tarball came from a mirror), or against `HARDCHARGER_INSTALL_SHA256`. It refuses a mismatch, and
@@ -156,7 +190,7 @@ and `SHA256SUMS`) at the same API, redirect and download paths GitHub uses. It r
 | Job | Where | What |
 |---|---|---|
 | lint | ubuntu-24.04 | shellcheck, `dash -n`, `bash -n`, PSScriptAnalyzer, and the platform checks with a fake `uname`/`getconf`/`ldd` (32-bit Pi, musl, Intel Mac, old glibc, …) |
-| fixtures linux-amd64, linux-arm64, macos-arm64 | ubuntu-24.04 (dash and bash), ubuntu-24.04-arm, macos-15 | latest and pinned installs, with a token and anonymously; the token reaching the API but never the storage host; `GH_TOKEN` and `gh auth token`; a downgrade to a pre-0.2.0 layout and a switch back with no download; `--list`; good, corrupted and missing checksums and a wrong GitHub digest; a build that doesn't run; a release with no asset for this platform; API rate-limit fallbacks; `--modify-path`, `--prefix`, every uninstall |
+| fixtures linux-amd64, linux-arm64, macos-arm64 | ubuntu-24.04 (dash and bash), ubuntu-24.04-arm, macos-15 | latest and pinned installs, with a token and anonymously; the token reaching the API but never the storage host; `GH_TOKEN` and `gh auth token`; a downgrade to a pre-0.2.0 layout and a switch back with no download; `--list`; good, corrupted and missing checksums and a wrong GitHub digest; a build that doesn't run; a release with no asset for this platform; API rate-limit fallbacks; `--modify-path`, `--prefix`, every uninstall; and on every host, as Linux x86-64 (a fake `uname`): `--cpu-target` auto on a v3 and a kvm64 CPU, forced builds, replacing one build of a version with the other, the baseline tarball's checksums (SHA256SUMS, GitHub's digest, a mirror, `HARDCHARGER_INSTALL_SHA256`), a version before the baseline build, and a build that dies of SIGILL |
 | fixtures windows-amd64, windows-arm64 | windows-2025, windows-11-arm (PowerShell 7 and 5.1) | the same with stand-in `.exe` builds, plus "Windows builds start with 0.3.0" for a release with no zip, both as a file and through `iex` |
 | glibc message | debian:12 (arm64, the Raspberry Pi OS Bookworm base), oraclelinux:8 | 0.2.0 is refused with the glibc explanation, before any download |
 
@@ -169,6 +203,11 @@ the job fails rather than skips. They also ask for a version that was never rele
 that the installer says so. The Debian 12 and Oracle Linux 8 entries are
 `continue-on-error`: the latest release needs only glibc 2.28 (since 0.3.0), but `scenarios.sh`
 also downgrades to 0.1.2, which needs glibc 2.38.
+
+The fixture tests read `/proc/cpuinfo` from a file (`HARDCHARGER_INSTALL_TEST_CPUINFO`, a test
+setting like `HARDCHARGER_INSTALL_GITHUB_API`), so the CPU of the machine running them doesn't
+decide what they see. On Linux x86-64, from 2.13.2 on, the real-release check also installs the
+baseline build (auto on a stand-in kvm64 `/proc/cpuinfo`), queries it, and switches back.
 
 Run them locally (each uses a throwaway `HOME`):
 
