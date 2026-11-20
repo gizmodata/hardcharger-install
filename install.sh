@@ -10,12 +10,17 @@
 #   ~/.hardcharger/versions/<version>/   one directory per installed version (bin/, lib/, ...)
 #   ~/.hardcharger/bin/                  links to the current version's executables
 #
-# Switching to a version that is already installed downloads nothing. A failed
-# download, checksum or check of the new binaries leaves the current version as it was.
+# Switching to a version that is already installed downloads nothing (unless the other build of it,
+# optimized or baseline, is asked for). A failed download, checksum or check of the new binaries
+# leaves the current version as it was.
 #
 # Options (pass them with `sh -s -- <options>` when piping):
 #   --version <v>      latest (the default), X.Y.Z or vX.Y.Z.     env: HARDCHARGER_VERSION
 #   --prefix <dir>     where to install (default ~/.hardcharger). env: HARDCHARGER_PREFIX
+#   --cpu-target <t>   Linux x86-64: auto (the default), optimized or baseline. env: HARDCHARGER_CPU_TARGET
+#                      auto installs the optimized build (x86-64-v3: AVX2), or the baseline build
+#                      (any x86-64 CPU, slower; released from 2.13.2 on) when /proc/cpuinfo lacks a
+#                      feature the optimized one needs
 #   --list             list the installed versions and exit
 #   --uninstall [<v>]  remove one version, or everything under the prefix
 #   --modify-path      add the bin directory to your shell's startup file
@@ -33,6 +38,8 @@
 #                              for tests: GitHub's API and web base URLs (default
 #                              https://api.github.com, https://github.com); plain http needs
 #                              HARDCHARGER_INSTALL_TEST_INSECURE=1 as well
+#   HARDCHARGER_INSTALL_TEST_CPUINFO
+#                              for tests: a file read in place of /proc/cpuinfo
 #
 # Source: https://github.com/gizmodata/hardcharger-install
 
@@ -50,6 +57,17 @@ if [ "${HARDCHARGER_INSTALL_TEST_INSECURE:-}" = 1 ]; then PROTO="=http,https"; f
 
 # Oldest glibc any Hardcharger Linux build supports (manylinux_2_28).
 GLIBC_FLOOR="2.28"
+
+# Linux x86-64 has two builds: the optimized one (hardcharger-linux-amd64.tar.gz: DuckDB for
+# x86-64-v3, Arrow for x86-64-v2) and, from this version on, the baseline one for any x86-64 CPU
+# (hardcharger-linux-amd64-baseline.tar.gz), for VMs whose CPU model hides AVX2 (QEMU's kvm64).
+BASELINE_FROM="2.13.2"
+# The /proc/cpuinfo flags the optimized build needs (x86-64-v3, and v2 below it; the same list as
+# the Python package's). abm is LZCNT, pni SSE3; the kernel lists avx only when it saves the AVX registers.
+X86_64_V3_FLAGS="cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave"
+# A version directory holding the baseline build has this file, saying "baseline". One without it
+# (every install before the baseline build existed) holds the optimized build.
+BUILD_MARKER=".hardcharger-build"
 
 # ---- output -------------------------------------------------------------------
 if [ -t 1 ]; then
@@ -82,6 +100,10 @@ Hardcharger installer (macOS and Linux)
 Options (with \`sh -s -- <options>\` when piping):
   --version <v>      latest (the default), X.Y.Z or vX.Y.Z      [HARDCHARGER_VERSION]
   --prefix <dir>     install root (default ~/.hardcharger)       [HARDCHARGER_PREFIX]
+  --cpu-target <t>   Linux x86-64 only: auto (the default), optimized or baseline  [HARDCHARGER_CPU_TARGET]
+                     optimized needs an x86-64-v3 CPU (AVX2); baseline runs on any x86-64 CPU, slower,
+                     and is released from $BASELINE_FROM on; auto picks baseline only when /proc/cpuinfo
+                     lacks a feature the optimized build needs
   --list             list installed versions
   --uninstall [<v>]  remove version <v>, or everything under the prefix
   --modify-path      add <prefix>/bin to your shell's startup file
@@ -101,6 +123,7 @@ EOF
 
 # ---- arguments ----------------------------------------------------------------
 VERSION="${HARDCHARGER_VERSION:-latest}"
+CPU_TARGET="${HARDCHARGER_CPU_TARGET:-}"
 PREFIX="${HARDCHARGER_PREFIX:-${HOME:-}/.hardcharger}"
 ACTION="install"
 UNINSTALL_VERSION=""
@@ -114,6 +137,9 @@ while [ $# -gt 0 ]; do
     --prefix)      [ $# -ge 2 ] || fatal "--prefix needs a directory"
                    PREFIX="$2"; shift 2 ;;
     --prefix=*)    PREFIX="${1#*=}"; shift ;;
+    --cpu-target)  [ $# -ge 2 ] || fatal "--cpu-target needs a value (auto, optimized or baseline)"
+                   CPU_TARGET="$2"; shift 2 ;;
+    --cpu-target=*) CPU_TARGET="${1#*=}"; shift ;;
     --list)        ACTION="list"; shift ;;
     --uninstall)   ACTION="uninstall"; shift
                    case "${1:-}" in -*|"") ;; *) UNINSTALL_VERSION="$1"; shift ;; esac ;;
@@ -123,6 +149,14 @@ while [ $# -gt 0 ]; do
     *)             fatal "unknown option: $1 (try --help)" ;;
   esac
 done
+
+# Spelled as the Python package takes it: any case, empty means auto.
+CPU_TARGET="$(printf '%s' "$CPU_TARGET" | tr '[:upper:]' '[:lower:]')"
+case "$CPU_TARGET" in
+  "") CPU_TARGET=auto ;;
+  auto|optimized|baseline) ;;
+  *) fatal "HARDCHARGER_CPU_TARGET/--cpu-target must be one of auto, optimized, baseline, not '$CPU_TARGET'" ;;
+esac
 
 [ -n "$PREFIX" ] || fatal "HOME is not set; pass --prefix <dir>"
 PREFIX="${PREFIX%/}"
@@ -158,6 +192,15 @@ installed_versions() {
   done | sort -t. -k1,1n -k2,2n -k3,3n
 }
 
+# The build version $1's directory holds: baseline, or optimized (no marker: every older install).
+installed_build() {
+  if [ "$(head -n 1 "$VERSIONS/$1/$BUILD_MARKER" 2>/dev/null || true)" = baseline ]; then
+    echo baseline
+  else
+    echo optimized
+  fi
+}
+
 do_list() {
   cur="$(current_version)"
   vs="$(installed_versions)"
@@ -167,7 +210,9 @@ do_list() {
   fi
   echo "Hardcharger versions in $VERSIONS:"
   for v in $vs; do
-    if [ "$v" = "$cur" ]; then echo "  * $v (current)"; else echo "    $v"; fi
+    b=""
+    if [ "$(installed_build "$v")" = baseline ]; then b=baseline; fi
+    if [ "$v" = "$cur" ]; then echo "  * $v (current${b:+, $b})"; else echo "    $v${b:+ ($b)}"; fi
   done
 }
 
@@ -329,6 +374,75 @@ check_libc() {
     musl) fatal "this system uses musl libc (Alpine Linux or similar), and Hardcharger's Linux builds need glibc. Use a glibc distribution (Debian, Ubuntu, RHEL, ...) or the Docker image (gizmodata/hardcharger)." ;;
     "")   warn "couldn't tell this system's glibc version; Hardcharger's Linux builds need glibc >= $GLIBC_FLOOR." ;;
   esac
+}
+
+# ---- CPU target (Linux x86-64: the optimized or the baseline build) -----------
+# The x86-64-v3 features this CPU lacks, from the first "flags" line of /proc/cpuinfo: "" when it
+# has them all. Returns 1 when there is no such line to read (then the optimized build is used).
+missing_cpu_features() {
+  ci="${HARDCHARGER_INSTALL_TEST_CPUINFO:-/proc/cpuinfo}"
+  [ -r "$ci" ] || return 1
+  fl="$(awk -F: '$1 ~ /^flags[[:space:]]*$/ { v = $2; gsub(/[[:space:]]+/, " ", v); print v; exit }' "$ci" 2>/dev/null || true)"
+  [ -n "$fl" ] || return 1
+  miss=""
+  for f in $X86_64_V3_FLAGS; do
+    case " $fl " in *" $f "*) ;; *) miss="${miss:+$miss }$f" ;; esac
+  done
+  echo "$miss"
+}
+
+# Sets BUILD (optimized or baseline) and MISSING (the features auto found missing), before any download.
+choose_build() {
+  BUILD=optimized
+  MISSING=""
+  if [ "$PLATFORM" != linux-amd64 ]; then
+    [ "$CPU_TARGET" != baseline ] || fatal "--cpu-target baseline (HARDCHARGER_CPU_TARGET=baseline): the baseline build is for Linux on x86-64 only, and this is $PLATFORM, which has one build for every CPU. Run again without it."
+    return 0
+  fi
+  case "$CPU_TARGET" in
+    baseline) BUILD=baseline ;;
+    auto) if MISSING="$(missing_cpu_features)" && [ -n "$MISSING" ]; then BUILD=baseline; fi ;;
+  esac
+}
+
+baseline_released() { version_ge "${1%%[-+]*}" "$BASELINE_FROM"; }
+
+# The baseline build is released from $BASELINE_FROM on. Asked for by name for an older version $1,
+# that is an error (not a 404). Chosen by auto, the optimized build is tried instead: /proc/cpuinfo
+# can leave out features the CPU runs (Docker's x86-64 emulation on Apple silicon lists no abm or
+# xsave, yet runs the optimized build), and check_build runs the build before anything switches, so
+# on a CPU that really lacks them (it stops with "Illegal instruction") nothing changes.
+check_baseline_released() {
+  [ "$BUILD" = baseline ] || return 0
+  baseline_released "$1" && return 0
+  if [ "$CPU_TARGET" = baseline ]; then
+    fatal "Hardcharger $1 has no baseline build: the baseline build is released from $BASELINE_FROM on. Install $BASELINE_FROM or later (the latest is the default), or run without --cpu-target baseline (HARDCHARGER_CPU_TARGET) for $1's optimized build."
+  fi
+  BUILD=optimized
+  warn "this CPU lacks $MISSING, which Hardcharger's optimized Linux x86-64 build needs (x86-64-v3: AVX2), and Hardcharger $1 has no baseline build: the baseline build is released from $BASELINE_FROM on. Trying $1's optimized build: it is installed only if it runs here (an emulator, such as Docker's on Apple silicon, can run it without listing these features)."
+  echo "  For the baseline build, which runs on any x86-64 CPU, install the latest release (the default) or pin $BASELINE_FROM or newer." >&2
+  echo "  $(vm_hint)" >&2
+}
+
+# check_build's hint when the optimized Linux x86-64 build doesn't run on this CPU.
+cpu_hint() {
+  if baseline_released "$VER"; then
+    echo "  This CPU lacks instructions Hardcharger's optimized Linux x86-64 build needs. The baseline build runs on any x86-64 CPU, but slower: run this again with --cpu-target baseline (HARDCHARGER_CPU_TARGET=baseline). $(vm_hint)"
+  else
+    echo "  This CPU lacks instructions Hardcharger's optimized Linux x86-64 build needs. The baseline build, for any x86-64 CPU, is released from $BASELINE_FROM on: install the latest release (the default) or pin $BASELINE_FROM or newer. $(vm_hint)"
+  fi
+}
+
+vm_hint() {
+  echo "On a virtual machine, its CPU model setting (QEMU's or Proxmox's \"kvm64\" or \"qemu64\", for example) can hide the host's CPU features: set it to \"host\" (or x86-64-v3) to run the optimized build."
+}
+
+# auto chose the baseline build: say why, and how to choose.
+announce_baseline() {
+  [ "$BUILD" = baseline ] && [ "$CPU_TARGET" = auto ] || return 0
+  warn "this CPU lacks $MISSING, which Hardcharger's optimized Linux x86-64 build needs (x86-64-v3: AVX2), so this installer uses the baseline build (hardcharger-linux-amd64-baseline.tar.gz). It runs on any x86-64 CPU, but slower."
+  echo "  $(vm_hint)" >&2
+  echo "  To choose the build yourself: --cpu-target optimized or --cpu-target baseline (HARDCHARGER_CPU_TARGET=optimized or =baseline)." >&2
 }
 
 # ---- downloads ----------------------------------------------------------------
@@ -508,9 +622,18 @@ check_build() {
   fi
   for exe in "$dir"/bin/*; do
     if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then continue; fi
-    if ! out="$("$exe" --version 2>&1)"; then
+    rc=0
+    out="$("$exe" --version 2>&1)" || rc=$?
+    if [ "$rc" != 0 ]; then
       echo "  $(basename "$exe") --version failed:" >&2
+      # A program killed by SIGILL (exit 132) prints nothing itself.
+      [ "$rc" != 132 ] || out="${out:+$out
+}Illegal instruction (exit 132)"
       printf '%s\n' "$out" | sed 's/^/    /' | head -n 8 >&2
+      if [ "$PLATFORM" = linux-amd64 ] && [ "${BUILD:-optimized}" = optimized ]; then
+        # Killed by SIGILL (releases before 2.13.2), or 2.13.2's own CPU check naming the baseline build.
+        case "$rc:$out" in 132:*|*"baseline build"*) cpu_hint >&2; return 1 ;; esac
+      fi
       case "$out" in
         *GLIBC_*) echo "  It needs a newer glibc than this system's $SYS_GLIBC. $(glibc_hint)" >&2 ;;
         *openssl@3*) echo "  This build needs OpenSSL 3 from Homebrew: brew install openssl@3" >&2 ;;
@@ -531,6 +654,7 @@ do_install() {
   need curl
   need tar
   need awk
+  choose_build
 
   mkdir -p "$PREFIX" 2>/dev/null || fatal "can't create $PREFIX (pass --prefix <a writable directory>)"
   [ -w "$PREFIX" ] || fatal "$PREFIX is not writable (pass --prefix <a writable directory>)"
@@ -543,8 +667,10 @@ do_install() {
     gn="$(glibc_needed "$VERSION")"
     version_ge "$SYS_GLIBC" "$gn" || glibc_too_old "$VERSION" "$gn" "$SYS_GLIBC"
   fi
+  [ "$VERSION" = latest ] || check_baseline_released "$VERSION"
   setup_auth
-  if [ "$VERSION" != latest ] && [ -x "$VERSIONS/$VERSION/bin/hardcharger-server" ]; then
+  if [ "$VERSION" != latest ] && [ -x "$VERSIONS/$VERSION/bin/hardcharger-server" ] \
+    && [ "$(installed_build "$VERSION")" = "$BUILD" ]; then
     VER="$VERSION"; TAG="v$VER"         # installed already: no network needed
   else
     resolve_release                     # "latest" costs one small API call, then the same check
@@ -553,17 +679,37 @@ do_install() {
     gn="$(glibc_needed "$VER")"
     version_ge "$SYS_GLIBC" "$gn" || glibc_too_old "$VER" "$gn" "$SYS_GLIBC"
   fi
+  check_baseline_released "$VER"
+  announce_baseline
+  # The baseline build's tarball and its top directory are named hardcharger-<platform>-baseline.
+  name="hardcharger-$PLATFORM"
+  [ "$BUILD" = optimized ] || name="$name-$BUILD"
+  asset="$name.tar.gz"
+  # " (baseline build)" in the messages below; nothing for the optimized build, as before.
+  bl=""
+  [ "$BUILD" = optimized ] || bl=" ($BUILD build)"
 
   prev="$(current_version)"
-  if [ -x "$VERSIONS/$VER/bin/hardcharger-server" ] && check_build "$VERSIONS/$VER" 2>/dev/null; then
+  was="$prev"
+  if [ -x "$VERSIONS/$VER/bin/hardcharger-server" ] && [ "$(installed_build "$VER")" = "$BUILD" ] \
+    && check_build "$VERSIONS/$VER" 2>/dev/null; then
     if [ "$prev" = "$VER" ]; then
-      info "Hardcharger $VER is installed and current"
-    else
+      info "Hardcharger $VER$bl is installed and current"
+    elif [ -z "$bl" ]; then
       switch_to "$VER"
       info "Switched to Hardcharger $VER (already installed; nothing downloaded)${prev:+, from $prev}"
+    else
+      switch_to "$VER"
+      info "Switched to Hardcharger $VER ($BUILD build; already installed, nothing downloaded)${prev:+, from $prev}"
     fi
   else
-    asset="hardcharger-$PLATFORM.tar.gz"
+    if [ -x "$VERSIONS/$VER/bin/hardcharger-server" ]; then
+      old="$(installed_build "$VER")"
+      if [ "$old" != "$BUILD" ]; then
+        info "Hardcharger $VER is installed as the $old build; replacing it with the $BUILD build"
+        [ "$prev" != "$VER" ] || was="its $old build"
+      fi
+    fi
     info "Downloading Hardcharger $VER for $PLATFORM ($asset)"
     if ! fetch_asset "$asset" "$WORK/$asset"; then
       # When GitHub's API described the release, it exists and just has no build for this
@@ -586,7 +732,7 @@ do_install() {
         /*|..|../*|*/..|*/../*) fatal "$asset holds ${l#"$WORK/x/"}, a link to $(readlink "$l") outside the build; not installing it" ;;
       esac
     done < "$WORK/links"
-    top="$WORK/x/hardcharger-$PLATFORM"
+    top="$WORK/x/$name"
     [ -d "$top" ] || top="$WORK/x"
     # Releases before 0.2.0 named the server `hardcharger` (the client's name since 0.2.0):
     # install it as hardcharger-server, so that name always means the server.
@@ -600,12 +746,15 @@ do_install() {
     if [ "$OS" = macos ] && command -v xattr >/dev/null 2>&1; then
       xattr -dr com.apple.quarantine "$top" 2>/dev/null || true
     fi
-    check_build "$top" || fatal "Hardcharger $VER doesn't run on this system, so it wasn't installed${prev:+; $prev is still current}."
+    check_build "$top" || fatal "Hardcharger $VER$bl doesn't run on this system, so it wasn't installed${prev:+; $prev is still current}."
+    # Record the build (only the installer writes this file, never the tarball).
+    rm -rf "${top:?}/$BUILD_MARKER"
+    [ "$BUILD" = optimized ] || printf '%s\n' "$BUILD" > "$top/$BUILD_MARKER"
     mkdir -p "$VERSIONS"
     [ ! -e "$VERSIONS/$VER" ] || mv "$VERSIONS/$VER" "$WORK/old"
     mv "$top" "$VERSIONS/$VER"
     switch_to "$VER"
-    info "Installed Hardcharger $VER in $VERSIONS/$VER${prev:+ (was $prev)}"
+    info "Installed Hardcharger $VER$bl in $VERSIONS/$VER${was:+ (was $was)}"
   fi
 
   for exe in "$BIN"/*; do

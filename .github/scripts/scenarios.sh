@@ -4,7 +4,9 @@
 # without credentials and gates the deploy):
 # install, smoke test, downgrade, switch back without a download, --list, a corrupted
 # download, a build that doesn't run, a SHA256SUMS without the asset, anonymous downloads,
-# --modify-path, uninstalling one version, the current one, and everything.
+# --modify-path, uninstalling one version, the current one, and everything. On Linux x86-64, from
+# 2.13.2 on: the baseline build, chosen by auto on a kvm64 CPU (HARDCHARGER_INSTALL_TEST_CPUINFO),
+# queried, and replaced by the optimized build again.
 #
 #   [HARDCHARGER_INSTALL_TOKEN=...] .github/scripts/scenarios.sh [<version under test>]
 #
@@ -110,6 +112,31 @@ step "5. --list"
 run 0 -- --list
 expect "* $UNDER_TEST (current)"
 expect "    $OLD"
+
+# The baseline Linux x86-64 build (for any x86-64 CPU) is released from 2.13.2 on.
+if [ "$PLATFORM" = linux-amd64 ] && awk -v a="${UNDER_TEST%%[-+]*}" 'BEGIN { split(a, x, "."); exit !(x[1] > 2 || (x[1] == 2 && (x[2] > 13 || (x[2] == 13 && x[3] >= 2)))) }'; then
+  step "5b. auto on a kvm64 CPU installs $UNDER_TEST's baseline build, which runs here too"
+  printf 'model name\t: Common KVM processor\nflags\t\t: fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx lm constant_tsc nopl xtopology cpuid pni cx16 hypervisor pti\n' > "$ROOT/kvm64"
+  run 0 HARDCHARGER_VERSION="$UNDER_TEST" HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64" --
+  expect "this CPU lacks"
+  expect "Hardcharger $UNDER_TEST is installed as the optimized build; replacing it with the baseline build"
+  expect "Downloading Hardcharger $UNDER_TEST for linux-amd64 (hardcharger-linux-amd64-baseline.tar.gz)"
+  expect "Checksum OK (SHA256SUMS"
+  expect "Installed Hardcharger $UNDER_TEST (baseline build)"
+  is_current "$UNDER_TEST"
+  "$HERE/e2e.sh" "$P/bin" "$((PORT + 8))" "$UNDER_TEST"
+  run 0 -- --list
+  expect "* $UNDER_TEST (current, baseline)"
+
+  step "5c. --cpu-target optimized puts the optimized build back"
+  run 0 HARDCHARGER_VERSION="$UNDER_TEST" -- --cpu-target optimized
+  expect "Hardcharger $UNDER_TEST is installed as the baseline build; replacing it with the optimized build"
+  expect "Downloading Hardcharger $UNDER_TEST for linux-amd64 (hardcharger-linux-amd64.tar.gz)"
+  is_current "$UNDER_TEST"
+  "$P/bin/hardcharger-server" --version | grep -F "Hardcharger $UNDER_TEST" >/dev/null || fail "the optimized build doesn't run"
+else
+  echo "(no baseline build to check: $PLATFORM, Hardcharger $UNDER_TEST)"
+fi
 
 # ---------------------------------------------------------------------------------------------
 # Remove the older build before mirroring it: an already-installed version would take

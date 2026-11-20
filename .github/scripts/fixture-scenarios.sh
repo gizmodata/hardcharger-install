@@ -9,7 +9,11 @@
 # HARDCHARGER_INSTALL_SHA256), a mirror's own SHA256SUMS not trusted, a version with a line break,
 # a pipe or an outward link in the archive, the https-only test overrides, a cut-short script, a build that
 # doesn't run, a release without this platform's asset, an unknown version, --modify-path,
-# --prefix, and every uninstall.
+# --prefix, and every uninstall. Then the CPU target (Linux x86-64's optimized and baseline builds,
+# on every host: a fake uname says Linux x86_64 and HARDCHARGER_INSTALL_TEST_CPUINFO stands in for
+# /proc/cpuinfo): auto on a v3 CPU and on kvm64, forced builds, switching builds of one version
+# (a reinstall) and between versions (none), --list, the baseline's checksum (SHA256SUMS, GitHub's
+# digest, a mirror, HARDCHARGER_INSTALL_SHA256), the token path, and a version with no baseline build.
 #
 #   .github/scripts/fixture-scenarios.sh            (SH picks the shell the installer runs under)
 set -eu
@@ -28,10 +32,15 @@ export HOME="$ROOT/home"
 mkdir -p "$HOME"
 P="$HOME/.hardcharger"
 OUT="$ROOT/out"
-unset HARDCHARGER_INSTALL_TOKEN GH_TOKEN HARDCHARGER_VERSION HARDCHARGER_PREFIX HARDCHARGER_INSTALL_MIRROR HARDCHARGER_INSTALL_SHA256 HARDCHARGER_INSTALL_ALLOW_HTTP 2>/dev/null || true
+unset HARDCHARGER_INSTALL_TOKEN GH_TOKEN HARDCHARGER_VERSION HARDCHARGER_PREFIX HARDCHARGER_INSTALL_MIRROR HARDCHARGER_INSTALL_SHA256 HARDCHARGER_INSTALL_ALLOW_HTTP HARDCHARGER_CPU_TARGET 2>/dev/null || true
 # Nothing here may reach the real GitHub: a step that names no fake server gets a dead one.
 # The stand-ins are plain http, which the installer allows only with the test flag.
 export HARDCHARGER_INSTALL_GITHUB_API=http://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=http://127.0.0.1:9 HARDCHARGER_INSTALL_TEST_INSECURE=1
+# On Linux x86-64 the installer reads /proc/cpuinfo to choose between the optimized and the baseline
+# build. The host's CPU must not decide what these tests see (Docker's x86-64 emulation on Apple
+# silicon lacks abm and xsave, for one), so every step reads a CPU with every feature, unless it says otherwise.
+printf 'flags\t\t: fpu sse sse2 cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave\n' > "$ROOT/v3"
+export HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/v3"
 
 step() { printf '\n### %s\n' "$*"; }
 fail() { echo "::error::$*"; [ -f "$OUT" ] && sed 's/^/  | /' "$OUT"; exit 1; }
@@ -91,24 +100,25 @@ build 1.0.4 hardcharger-server 1 0                # GitHub's digest doesn't matc
 echo "$ASSET sha256:1111111111111111111111111111111111111111111111111111111111111111" > "$F/v1.0.4/digest-override"
 mkdir -p "$F/v1.0.5"; echo "other" > "$F/v1.0.5/hardcharger-windows-amd64.zip"   # nothing for this platform
 
-serve() {   # serve <name> [--private]: starts a server, sets <name>_URL
-  "$PY" "$HERE/fake_github.py" --root "$F" --port 0 --port-file "$ROOT/$1.port" --log "$ROOT/$1.log" \
-    --token "$TOKEN" ${2:+"$2"} 2>"$ROOT/$1.err" &
+serve() {   # serve <name> <fixture root> [--private]: starts a server, sets <name>_URL
+  sname="$1"; sroot="$2"; sflag="${3:-}"
+  "$PY" "$HERE/fake_github.py" --root "$sroot" --port 0 --port-file "$ROOT/$sname.port" --log "$ROOT/$sname.log" \
+    --token "$TOKEN" ${sflag:+"$sflag"} 2>"$ROOT/$sname.err" &
   pid=$!
   PIDS="$PIDS $pid"
   i=0
-  until [ -s "$ROOT/$1.port" ]; do
+  until [ -s "$ROOT/$sname.port" ]; do
     i=$((i + 1))
     if [ "$i" -ge 600 ] || ! kill -0 "$pid" 2>/dev/null; then
-      cat "$ROOT/$1.err" >&2
-      fail "fake GitHub ($1) didn't start ($PY)"
+      cat "$ROOT/$sname.err" >&2
+      fail "fake GitHub ($sname) didn't start ($PY)"
     fi
     sleep 0.1
   done
-  eval "$1_URL=http://127.0.0.1:$(cat "$ROOT/$1.port")"
+  eval "${sname}_URL=http://127.0.0.1:$(cat "$ROOT/$sname.port")"
 }
-serve internal --private
-serve public
+serve internal "$F" --private
+serve public "$F"
 # shellcheck disable=SC2154 # set by serve
 INTERNAL="HARDCHARGER_INSTALL_GITHUB_API=$internal_URL/api HARDCHARGER_INSTALL_GITHUB_WEB=$internal_URL/web"
 # shellcheck disable=SC2154
@@ -387,6 +397,245 @@ expect "has the Hardcharger installer's PATH line; delete it"
 [ ! -e "$P" ] || fail "$P is still there"
 run 0 -- --uninstall
 expect "Nothing to remove"
+
+# ---- the CPU target: Linux x86-64's optimized and baseline builds (hardcharger#62) ----------------
+# On every host: a fake uname/getconf/ldd make this Linux x86_64 with glibc 2.39, the fixture
+# builds are shell scripts, and HARDCHARGER_INSTALL_TEST_CPUINFO stands in for /proc/cpuinfo.
+FL="$ROOT/fakelinux"; mkdir -p "$FL"
+# shellcheck disable=SC2016 # scripts written out verbatim
+printf '#!/bin/sh\ncase "$1" in -m) echo x86_64 ;; *) echo Linux ;; esac\n' > "$FL/uname"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\ncase "$1" in LONG_BIT) echo 64 ;; GNU_LIBC_VERSION) echo "glibc 2.39" ;; *) exit 1 ;; esac\n' > "$FL/getconf"
+printf '#!/bin/sh\necho "ldd (GNU libc) 2.39"\n' > "$FL/ldd"
+chmod +x "$FL"/*
+printf 'model name\t: Common KVM processor\nflags\t\t: fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx lm constant_tsc nopl xtopology cpuid pni cx16 hypervisor pti\n' > "$ROOT/kvm64"
+CF="$ROOT/cpu-fixtures"
+OA="hardcharger-linux-amd64.tar.gz"
+BA="hardcharger-linux-amd64-baseline.tar.gz"
+# cbuild <version> <optimized|baseline>: a tarball laid out like the release's, whose lib/build.txt
+# says which build it is.
+cbuild() {
+  n="hardcharger-linux-amd64"; [ "$2" = optimized ] || n="$n-$2"
+  d="$ROOT/cpu-build/$1-$2/$n"
+  mkdir -p "$d/bin" "$d/lib"
+  printf '#!/bin/sh\necho "Hardcharger %s"\n' "$1" > "$d/bin/hardcharger-server"
+  printf '#!/bin/sh\necho "Hardcharger Client %s"\n' "$1" > "$d/bin/hardcharger"
+  chmod +x "$d/bin/"*
+  echo "$2" > "$d/lib/build.txt"
+  echo "fixture" > "$d/LICENSE"
+  mkdir -p "$CF/v$1"
+  tar -czf "$CF/v$1/$n.tar.gz" -C "$ROOT/cpu-build/$1-$2" "$n"
+}
+csums() { : > "$CF/v$1/SHA256SUMS"; for a in "$CF/v$1"/*.tar.gz; do echo "$(sum "$a")  $(basename "$a")" >> "$CF/v$1/SHA256SUMS"; done; }
+cbuild 2.13.1 optimized; csums 2.13.1                              # before the baseline build
+cbuild 2.13.0 optimized                                            # before it too, and dies of SIGILL,
+printf '#!/bin/sh\nkill -ILL $$\n' > "$ROOT/cpu-build/2.13.0-optimized/hardcharger-linux-amd64/bin/hardcharger-server"
+tar -czf "$CF/v2.13.0/$OA" -C "$ROOT/cpu-build/2.13.0-optimized" hardcharger-linux-amd64; csums 2.13.0   # as on kvm64
+cbuild 2.13.5 optimized; cbuild 2.13.5 baseline                    # its optimized build refuses this CPU, as 2.13.2's do
+printf '#!/bin/sh\necho "hardcharger-server: this build needs an x86-64-v3 CPU (AVX2: Intel Haswell, AMD Excavator or newer), and this one lacks: avx2." >&2\necho "Download the baseline build, which runs on any x86-64 CPU: hardcharger-linux-amd64-baseline.tar.gz" >&2\nexit 1\n' > "$ROOT/cpu-build/2.13.5-optimized/hardcharger-linux-amd64/bin/hardcharger-server"
+tar -czf "$CF/v2.13.5/$OA" -C "$ROOT/cpu-build/2.13.5-optimized" hardcharger-linux-amd64; csums 2.13.5
+cbuild 2.13.2 optimized; cbuild 2.13.2 baseline; csums 2.13.2      # the first with both
+cbuild 2.13.3 optimized; cbuild 2.13.3 baseline; csums 2.13.3      # the baseline corrupted after SHA256SUMS
+size=$(wc -c < "$CF/v2.13.3/$BA" | tr -d ' ')
+printf 'X' | dd of="$CF/v2.13.3/$BA" bs=1 seek=$((size / 2)) conv=notrunc 2>/dev/null
+cbuild 2.13.4 optimized; cbuild 2.13.4 baseline                    # GitHub's digest of the baseline is wrong
+echo "$BA sha256:1111111111111111111111111111111111111111111111111111111111111111" > "$CF/v2.13.4/digest-override"
+# The latest. Its optimized tarball carries a marker file saying "baseline": only the installer may
+# write that file, so it must not make this build count as the baseline one.
+mkdir -p "$ROOT/cpu-build/2.14.0-optimized/hardcharger-linux-amd64"
+echo baseline > "$ROOT/cpu-build/2.14.0-optimized/hardcharger-linux-amd64/.hardcharger-build"
+cbuild 2.14.0 optimized; cbuild 2.14.0 baseline; csums 2.14.0
+serve cpupub "$CF"
+serve cpuint "$CF" --private
+# shellcheck disable=SC2154 # set by serve
+CPUPUB="PATH=$FL:$PATH HARDCHARGER_INSTALL_GITHUB_API=$cpupub_URL/api HARDCHARGER_INSTALL_GITHUB_WEB=$cpupub_URL/web $NO_TOKEN"
+# Offline: the fake Linux, and no GitHub (the dead server every step gets by default).
+CPUOFF="PATH=$FL:$PATH $NO_TOKEN"
+CP="$ROOT/cpu"
+KVM="HARDCHARGER_INSTALL_TEST_CPUINFO=$ROOT/kvm64"
+V3="HARDCHARGER_INSTALL_TEST_CPUINFO=$ROOT/v3"
+cur_build() { cat "$CP/versions/$1/lib/build.txt"; }
+ccurrent() { readlink "$CP/bin/hardcharger-server" 2>/dev/null | sed 's|^\.\./versions/||; s|/.*||'; }
+cis_current() { [ "$(ccurrent)" = "$1" ] || fail "current version is '$(ccurrent)', expected '$1'"; }
+
+step "22. auto on a v3 CPU: the optimized build, as before"
+# shellcheck disable=SC2086
+run 0 $CPUPUB $V3 -- --prefix "$CP"
+expect "Downloading Hardcharger 2.14.0 for linux-amd64 ($OA)"
+expect "Installed Hardcharger 2.14.0 in $CP/versions/2.14.0"
+expect_not "baseline"
+[ "$(cur_build 2.14.0)" = optimized ] || fail "auto on a v3 CPU didn't install the optimized build"
+[ ! -e "$CP/versions/2.14.0/.hardcharger-build" ] || fail "the tarball's own .hardcharger-build was kept"
+run 0 -- --prefix "$CP" --list
+expect "  * 2.14.0 (current)"
+expect_not "baseline"
+
+step "23. auto on kvm64: the baseline build, with why and how to choose; it replaces the optimized one"
+# shellcheck disable=SC2086
+run 0 $CPUPUB $KVM -- --prefix "$CP"
+expect "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave, which Hardcharger's optimized Linux x86-64 build needs"
+expect "It runs on any x86-64 CPU, but slower."
+expect "can hide the host's CPU features"
+expect "To choose the build yourself: --cpu-target optimized or --cpu-target baseline"
+expect "Hardcharger 2.14.0 is installed as the optimized build; replacing it with the baseline build"
+expect "Downloading Hardcharger 2.14.0 for linux-amd64 ($BA)"
+expect "Checksum OK (SHA256SUMS and GitHub's asset digest)"
+expect "Installed Hardcharger 2.14.0 (baseline build) in $CP/versions/2.14.0 (was its optimized build)"
+[ "$(cur_build 2.14.0)" = baseline ] || fail "auto on kvm64 didn't install the baseline build"
+cis_current 2.14.0
+[ "$("$CP/bin/hardcharger-server" --version)" = "Hardcharger 2.14.0" ] || fail "bin/hardcharger-server isn't 2.14.0"
+grep -q "/web/gizmodata/hardcharger/releases/download/v2.14.0/$BA" "$ROOT/cpupub.log" || fail "the baseline tarball wasn't downloaded from the release"
+run 0 -- --prefix "$CP" --list
+expect "  * 2.14.0 (current, baseline)"
+
+step "24. auto on kvm64 again: installed and current, nothing downloaded"
+# shellcheck disable=SC2086
+run 0 $CPUOFF $KVM HARDCHARGER_VERSION=2.14.0 -- --prefix "$CP"
+expect "Hardcharger 2.14.0 (baseline build) is installed and current"
+expect_not "Downloading"
+
+step "25. --cpu-target optimized on kvm64 replaces the baseline build with the optimized one"
+# shellcheck disable=SC2086
+run 0 $CPUPUB $KVM -- --prefix "$CP" --version 2.14.0 --cpu-target optimized
+expect_not "this CPU lacks"
+expect "Hardcharger 2.14.0 is installed as the baseline build; replacing it with the optimized build"
+expect "Downloading Hardcharger 2.14.0 for linux-amd64 ($OA)"
+expect "Installed Hardcharger 2.14.0 in $CP/versions/2.14.0 (was its baseline build)"
+[ "$(cur_build 2.14.0)" = optimized ] || fail "--cpu-target optimized didn't install the optimized build"
+[ ! -e "$CP/versions/2.14.0/.hardcharger-build" ] || fail "the optimized build kept the baseline marker"
+
+step "26. --cpu-target=baseline on a v3 CPU, another version: 2.13.2's baseline build"
+# shellcheck disable=SC2086
+run 0 $CPUPUB $V3 -- --prefix "$CP" --version v2.13.2 --cpu-target=baseline
+expect_not "this CPU lacks"
+expect "Downloading Hardcharger 2.13.2 for linux-amd64 ($BA)"
+expect "Installed Hardcharger 2.13.2 (baseline build) in $CP/versions/2.13.2 (was 2.14.0)"
+[ "$(cur_build 2.13.2)" = baseline ] || fail "2.13.2 isn't the baseline build"
+run 0 -- --prefix "$CP" --list
+expect "  * 2.13.2 (current, baseline)"
+expect "    2.14.0"
+expect_not "2.14.0 (baseline)"
+
+step "27. Switching between installed versions keeps each one's build and downloads nothing"
+# shellcheck disable=SC2086
+run 0 $CPUOFF $V3 HARDCHARGER_VERSION=2.14.0 -- --prefix "$CP"
+expect "Switched to Hardcharger 2.14.0 (already installed; nothing downloaded), from 2.13.2"
+expect_not "Downloading"
+cis_current 2.14.0
+# shellcheck disable=SC2086
+run 0 $CPUOFF $V3 HARDCHARGER_CPU_TARGET=baseline HARDCHARGER_VERSION=2.13.2 -- --prefix "$CP"
+expect "Switched to Hardcharger 2.13.2 (baseline build; already installed, nothing downloaded), from 2.14.0"
+expect_not "Downloading"
+cis_current 2.13.2
+[ "$(cur_build 2.13.2)" = baseline ] || fail "switching changed 2.13.2's build"
+
+step "28. auto on a v3 CPU, 2.13.2: the baseline build installed is replaced by the optimized one"
+# shellcheck disable=SC2086
+run 0 $CPUPUB $V3 HARDCHARGER_VERSION=2.13.2 -- --prefix "$CP"
+expect "Hardcharger 2.13.2 is installed as the baseline build; replacing it with the optimized build"
+expect "Installed Hardcharger 2.13.2 in $CP/versions/2.13.2 (was its baseline build)"
+[ "$(cur_build 2.13.2)" = optimized ] || fail "2.13.2 isn't the optimized build"
+
+step "29. A corrupted baseline tarball is refused, and nothing changes"
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $V3 HARDCHARGER_CPU_TARGET=baseline HARDCHARGER_VERSION=2.13.3 -- --prefix "$CP"
+expect "checksum mismatch for $BA: SHA256SUMS says"
+expect "Nothing was changed"
+cis_current 2.13.2
+[ ! -e "$CP/versions/2.13.3" ] || fail "a refused baseline download left versions/2.13.3"
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $V3 HARDCHARGER_CPU_TARGET=baseline HARDCHARGER_VERSION=2.13.4 -- --prefix "$CP"
+expect "checksum mismatch for $BA: GitHub says 1111111111111111111111111111111111111111111111111111111111111111"
+[ ! -e "$CP/versions/2.13.4" ] || fail "a baseline tarball with a wrong digest was installed"
+# Replacing the current version's build: a refused download keeps the build installed.
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $KVM HARDCHARGER_VERSION=2.13.2 HARDCHARGER_INSTALL_SHA256=1111111111111111111111111111111111111111111111111111111111111111 -- --prefix "$CP"
+expect "Hardcharger 2.13.2 is installed as the optimized build; replacing it with the baseline build"
+expect "checksum mismatch for $BA: HARDCHARGER_INSTALL_SHA256 says"
+cis_current 2.13.2
+[ "$(cur_build 2.13.2)" = optimized ] || fail "a refused baseline download changed 2.13.2's build"
+
+step "30. A version from before the baseline build: --cpu-target baseline is refused before any download; auto tries the optimized build"
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $V3 HARDCHARGER_VERSION=2.13.1 -- --prefix "$CP" --cpu-target baseline
+expect "Hardcharger 2.13.1 has no baseline build: the baseline build is released from 2.13.2 on."
+expect_not "Downloading"
+# auto: /proc/cpuinfo may leave out features the CPU runs (Docker's x86-64 emulation on Apple silicon
+# lists no abm or xsave, yet runs the optimized build), so the optimized build is tried, and installed
+# only if it runs. One that dies of SIGILL, as before 2.13.2 on kvm64, changes nothing.
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $KVM HARDCHARGER_VERSION=2.13.0 -- --prefix "$CP"
+expect "and Hardcharger 2.13.0 has no baseline build: the baseline build is released from 2.13.2 on. Trying 2.13.0's optimized build"
+expect "Downloading Hardcharger 2.13.0 for linux-amd64 ($OA)"
+expect "Illegal instruction (exit 132)"
+expect "This CPU lacks instructions Hardcharger's optimized Linux x86-64 build needs. The baseline build, for any x86-64 CPU, is released from 2.13.2 on: install the latest release (the default) or pin 2.13.2 or newer."
+expect "Hardcharger 2.13.0 doesn't run on this system, so it wasn't installed; 2.13.2 is still current"
+cis_current 2.13.2
+[ ! -e "$CP/versions/2.13.0" ] || fail "a build that died of SIGILL was kept"
+# One that runs (the emulator's case) is installed.
+# shellcheck disable=SC2086
+run 0 $CPUPUB $KVM HARDCHARGER_VERSION=2.13.1 -- --prefix "$CP"
+expect "Trying 2.13.1's optimized build: it is installed only if it runs here"
+expect "Installed Hardcharger 2.13.1 in $CP/versions/2.13.1 (was 2.13.2)"
+cis_current 2.13.1
+[ "$(cur_build 2.13.1)" = optimized ] || fail "2.13.1 isn't the optimized build"
+
+step "30b. An optimized build that refuses this CPU (2.13.2's own check): the hint names --cpu-target baseline"
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $V3 HARDCHARGER_VERSION=2.13.5 -- --prefix "$CP"
+expect "this build needs an x86-64-v3 CPU"
+expect "The baseline build runs on any x86-64 CPU, but slower: run this again with --cpu-target baseline (HARDCHARGER_CPU_TARGET=baseline)."
+expect "Hardcharger 2.13.5 doesn't run on this system, so it wasn't installed; 2.13.1 is still current"
+cis_current 2.13.1
+# Positive twin: the baseline build of that version installs.
+# shellcheck disable=SC2086
+run 0 $CPUPUB $V3 HARDCHARGER_VERSION=2.13.5 -- --prefix "$CP" --cpu-target baseline
+expect "Installed Hardcharger 2.13.5 (baseline build) in $CP/versions/2.13.5 (was 2.13.1)"
+
+step "31. The baseline build from a mirror: checked against the release's SHA256SUMS, or HARDCHARGER_INSTALL_SHA256"
+CM="$ROOT/cpu-mirror/v2.13.2"; mkdir -p "$CM"
+cp "$CF/v2.13.2/$BA" "$CM/$BA"
+# shellcheck disable=SC2086
+run 0 $CPUPUB $KVM HARDCHARGER_PREFIX="$ROOT/cpu-m" HARDCHARGER_VERSION=2.13.2 HARDCHARGER_INSTALL_MIRROR="$ROOT/cpu-mirror" --
+expect "Checksum OK (SHA256SUMS)"
+expect "Installed Hardcharger 2.13.2 (baseline build)"
+[ "$(cat "$ROOT/cpu-m/versions/2.13.2/lib/build.txt")" = baseline ] || fail "the mirror's baseline build wasn't installed"
+run 0 -- --prefix "$ROOT/cpu-m" --uninstall
+# The mirror's own build of the baseline, with its own SHA256SUMS: refused.
+mkdir -p "$ROOT/cpu-evil"; cp -R "$ROOT/cpu-build/2.13.2-baseline/hardcharger-linux-amd64-baseline" "$ROOT/cpu-evil/"
+echo "NOT-THE-REAL-BUILD" > "$ROOT/cpu-evil/hardcharger-linux-amd64-baseline/lib/evil.txt"
+tar -czf "$CM/$BA" -C "$ROOT/cpu-evil" hardcharger-linux-amd64-baseline
+echo "$(sum "$CM/$BA")  $BA" > "$CM/SHA256SUMS"
+# shellcheck disable=SC2086
+run nonzero $CPUPUB $KVM HARDCHARGER_PREFIX="$ROOT/cpu-m" HARDCHARGER_VERSION=2.13.2 HARDCHARGER_INSTALL_MIRROR="$ROOT/cpu-mirror" --
+expect "checksum mismatch for $BA: SHA256SUMS says $(sum "$CF/v2.13.2/$BA")"
+[ ! -e "$ROOT/cpu-m/versions/2.13.2" ] || fail "the mirror's baseline build was installed"
+# With HARDCHARGER_INSTALL_SHA256 (no GitHub at all): the given sum decides.
+cp "$CF/v2.13.2/$BA" "$CM/$BA"
+# shellcheck disable=SC2086
+run 0 $CPUOFF $KVM HARDCHARGER_PREFIX="$ROOT/cpu-m" HARDCHARGER_VERSION=2.13.2 HARDCHARGER_INSTALL_MIRROR="$ROOT/cpu-mirror" HARDCHARGER_INSTALL_SHA256="$(sum "$CF/v2.13.2/$BA")" --
+expect "Checksum OK (HARDCHARGER_INSTALL_SHA256)"
+expect "Installed Hardcharger 2.13.2 (baseline build)"
+run 0 -- --prefix "$ROOT/cpu-m" --uninstall
+
+step "32. The baseline build through the API with a token (internal releases)"
+: > "$ROOT/cpuint.log"
+# shellcheck disable=SC2086,SC2154
+run 0 PATH="$FL:$PATH" HARDCHARGER_INSTALL_GITHUB_API="$cpuint_URL/api" HARDCHARGER_INSTALL_GITHUB_WEB="$cpuint_URL/web" $WITH_TOKEN $KVM HARDCHARGER_PREFIX="$ROOT/cpu-t" --
+expect "Downloading Hardcharger 2.14.0 for linux-amd64 ($BA)"
+expect "Checksum OK (SHA256SUMS and GitHub's asset digest)"
+[ "$(cat "$ROOT/cpu-t/versions/2.14.0/lib/build.txt")" = baseline ] || fail "the token path didn't install the baseline build"
+if grep -q '^/storage/.* auth=yes$' "$ROOT/cpuint.log"; then fail "the token was sent to the storage host"; fi
+
+step "33. Uninstall the baseline build of one version, then everything"
+# shellcheck disable=SC2086
+run 0 $CPUOFF $KVM HARDCHARGER_CPU_TARGET=baseline -- --prefix "$ROOT/cpu-t" --uninstall 2.14.0
+expect "Removed Hardcharger 2.14.0"
+[ ! -e "$ROOT/cpu-t/versions/2.14.0" ] || fail "versions/2.14.0 is still there"
+run 0 -- --prefix "$ROOT/cpu-t" --uninstall
+run 0 -- --prefix "$CP" --uninstall
+expect "Removed $CP"
+[ ! -e "$CP" ] || fail "$CP is still there"
 
 echo
 echo "ALL FIXTURE SCENARIOS PASSED ($PLATFORM, $SH)"
