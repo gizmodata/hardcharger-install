@@ -36,7 +36,8 @@ x86-64-v3 CPU (AVX2: Intel Haswell, AMD Excavator or newer). The baseline one
 CPU, such as a virtual machine whose CPU model hides AVX2 (QEMU's and Proxmox's `kvm64`), but slower.
 The installer reads the first `flags` line of `/proc/cpuinfo` and installs the baseline build only
 when a feature the optimized one needs is missing, and says which ones and why. On a VM, setting
-the CPU model to `host` (or `x86-64-v3`) is often the better fix. To choose yourself:
+the CPU model to `host` (or a model with AVX2: QEMU's `Haswell`, Proxmox's `x86-64-v3`) is often
+the better fix. To choose yourself:
 
 ```bash
 curl https://install.hardcharger.gizmodata.com | sh -s -- --cpu-target baseline     # or optimized

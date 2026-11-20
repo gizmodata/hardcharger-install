@@ -436,7 +436,7 @@ cpu_hint() {
 }
 
 vm_hint() {
-  echo "On a virtual machine, its CPU model setting (QEMU's or Proxmox's \"kvm64\" or \"qemu64\", for example) can hide the host's CPU features: set it to \"host\" (or x86-64-v3) to run the optimized build."
+  echo "On a virtual machine, its CPU model setting (QEMU's or Proxmox's \"kvm64\" or \"qemu64\", for example) can hide the host's CPU features: set it to \"host\" (or a model with AVX2: QEMU's \"Haswell\", Proxmox's \"x86-64-v3\") to run the optimized build."
 }
 
 # auto chose the baseline build: say why, and how to choose.
