@@ -24,6 +24,10 @@
 .PARAMETER Prefix
     Install root. Default %USERPROFILE%\.hardcharger. Also $env:HARDCHARGER_PREFIX.
 
+.PARAMETER CpuTarget
+    auto (the default) or optimized: Windows has one build for every CPU. baseline (Linux x86-64
+    only, through install.sh) is refused. Also $env:HARDCHARGER_CPU_TARGET.
+
 .PARAMETER List
     List the installed versions.
 
@@ -51,6 +55,7 @@
 param(
   [string]$Version = '',
   [string]$Prefix = '',
+  [string]$CpuTarget = '',
   [switch]$List,
   [switch]$Uninstall,
   [switch]$ModifyPath
@@ -385,8 +390,18 @@ try {
   if (-not $Prefix) { $Prefix = if ($env:HARDCHARGER_PREFIX) { $env:HARDCHARGER_PREFIX } else { Join-Path $HOME '.hardcharger' } }
   $Prefix = [IO.Path]::GetFullPath($Prefix).TrimEnd('\')
   $want = Get-NormalVersion $Version
+  # Taken as install.sh and the Python package take it, to say clearly that Windows has no baseline build.
+  if (-not $CpuTarget) { $CpuTarget = [string]$env:HARDCHARGER_CPU_TARGET }
+  $CpuTarget = $CpuTarget.ToLowerInvariant()
+  if (-not $CpuTarget) { $CpuTarget = 'auto' }
+  if (@('auto', 'optimized', 'baseline') -cnotcontains $CpuTarget) {
+    Fail "HARDCHARGER_CPU_TARGET/-CpuTarget must be one of auto, optimized, baseline, not '$CpuTarget'"
+  }
   if ($List) { Invoke-List $Prefix }
   elseif ($Uninstall) { Invoke-Uninstall $Prefix ($(if ($want -eq 'latest') { '' } else { $want })) }
+  elseif ($CpuTarget -eq 'baseline') {
+    Fail "-CpuTarget baseline (HARDCHARGER_CPU_TARGET=baseline): the baseline build is for Linux on x86-64 only, and Windows has one build for every CPU. Run again without it."
+  }
   else { Invoke-Install $Prefix $want ([bool]$ModifyPath) }
 } catch {
   if (-not $_.Exception.Data['hardcharger']) { throw }

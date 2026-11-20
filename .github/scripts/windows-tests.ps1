@@ -7,7 +7,8 @@
 #    (fake_github.py over the mirror folder), never from the mirror: a mirror's own build with its
 #    own SHA256SUMS is refused, a release with no checksum anywhere is refused unless
 #    HARDCHARGER_INSTALL_SHA256 gives one, and an http mirror needs HARDCHARGER_INSTALL_ALLOW_HTTP.
-#    Also: versions with a line break or a non-ASCII digit, and the https-only test overrides.
+#    Also: versions with a line break or a non-ASCII digit, the https-only test overrides, and the
+#    CPU target (baseline refused: Windows has one build; auto and optimized install it).
 # 3. The GitHub API path against fake_github.py: internal releases with and without a token,
 #    latest, SHA256SUMS and GitHub's digest, a release without a Windows zip ("Windows builds start
 #    with 0.3.0", as a file and through iex), the token kept off the storage host, anonymous public.
@@ -91,6 +92,15 @@ $r = Invoke-Installer @('-Prefix', $prefix) @{ HARDCHARGER_VERSION = '9.9.9'; HA
 Check 'switch back to 9.9.9 without a download (env version)' ($r.Code -eq 0 -and $r.Out -match 'nothing downloaded' -and $r.Out -notmatch 'Downloading' -and (Current) -eq '9.9.9')
 $r = Invoke-Installer @('-Prefix', $prefix, '-List')
 Check '-List' ($r.Out -match '\* 9\.9\.9 \(current\)' -and $r.Out -match '    9\.9\.8')
+# The CPU target: Windows has one build, so baseline (Linux x86-64 only) is refused, before anything changes.
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8') @{ HARDCHARGER_CPU_TARGET = 'baseline'; HARDCHARGER_INSTALL_MIRROR = $mirror }
+Check 'HARDCHARGER_CPU_TARGET=baseline: Windows has one build' ($r.Code -ne 0 -and $r.Out.Contains('the baseline build is for Linux on x86-64 only, and Windows has one build for every CPU') -and $r.Out -notmatch 'Downloading' -and (Current) -eq '9.9.9')
+$r = Invoke-Installer @('-Prefix', $prefix, '-CpuTarget', 'fastest')
+Check 'a wrong -CpuTarget is refused' ($r.Code -ne 0 -and $r.Out.Contains("HARDCHARGER_CPU_TARGET/-CpuTarget must be one of auto, optimized, baseline, not 'fastest'"))
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.8', '-CpuTarget', 'Optimized') @{ HARDCHARGER_INSTALL_TOKEN = 'none'; HARDCHARGER_INSTALL_MIRROR = '' }
+Check '-CpuTarget optimized: the one build, switched to without a download' ($r.Code -eq 0 -and $r.Out -match 'nothing downloaded' -and (Current) -eq '9.9.8')
+$r = Invoke-Installer @('-Prefix', $prefix, '-Version', '9.9.9') @{ HARDCHARGER_CPU_TARGET = 'auto'; HARDCHARGER_INSTALL_TOKEN = 'none'; HARDCHARGER_INSTALL_MIRROR = '' }
+Check 'HARDCHARGER_CPU_TARGET=auto: switched back to 9.9.9' ($r.Code -eq 0 -and (Current) -eq '9.9.9')
 
 # A prefix with nothing installed, so these downloads aren't skipped as "installed already".
 $sp = Join-Path $root 'hc-mirror'
