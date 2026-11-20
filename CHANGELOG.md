@@ -7,6 +7,8 @@ All notable changes to the Hardcharger installer are documented here. The format
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-20
+
 ### Added
 
 - **The baseline Linux x86-64 build** (gizmodata/hardcharger#62). From Hardcharger 2.13.2 on,
