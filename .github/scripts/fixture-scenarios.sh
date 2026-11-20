@@ -38,7 +38,7 @@ unset HARDCHARGER_INSTALL_TOKEN GH_TOKEN HARDCHARGER_VERSION HARDCHARGER_PREFIX 
 export HARDCHARGER_INSTALL_GITHUB_API=http://127.0.0.1:9 HARDCHARGER_INSTALL_GITHUB_WEB=http://127.0.0.1:9 HARDCHARGER_INSTALL_TEST_INSECURE=1
 # On Linux x86-64 the installer reads /proc/cpuinfo to choose between the optimized and the baseline
 # build. The host's CPU must not decide what these tests see (Docker's x86-64 emulation on Apple
-# silicon lacks abm and xsave, for one), so every step reads a CPU with every feature, unless it says otherwise.
+# silicon shows a CPU without abm or xsave, for one), so every step reads a CPU with every feature, unless it says otherwise.
 printf 'flags\t\t: fpu sse sse2 cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave\n' > "$ROOT/v3"
 export HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/v3"
 
@@ -473,7 +473,7 @@ expect_not "baseline"
 step "23. auto on kvm64: the baseline build, with why and how to choose; it replaces the optimized one"
 # shellcheck disable=SC2086
 run 0 $CPUPUB $KVM -- --prefix "$CP"
-expect "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave, which Hardcharger's optimized Linux x86-64 build needs"
+expect "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma movbe, which Hardcharger's optimized Linux x86-64 build needs"
 expect "It runs on any x86-64 CPU, but slower."
 expect "can hide the host's CPU features"
 expect "To choose the build yourself: --cpu-target optimized or --cpu-target baseline"
@@ -560,8 +560,7 @@ step "30. A version from before the baseline build: --cpu-target baseline is ref
 run nonzero $CPUPUB $V3 HARDCHARGER_VERSION=2.13.1 -- --prefix "$CP" --cpu-target baseline
 expect "Hardcharger 2.13.1 has no baseline build: the baseline build is released from 2.13.2 on."
 expect_not "Downloading"
-# auto: /proc/cpuinfo may leave out features the CPU runs (Docker's x86-64 emulation on Apple silicon
-# lists no abm or xsave, yet runs the optimized build), so the optimized build is tried, and installed
+# auto: /proc/cpuinfo may leave out features the CPU runs (an emulator), so the optimized build is tried, and installed
 # only if it runs. One that dies of SIGILL, as before 2.13.2 on kvm64, changes nothing.
 # shellcheck disable=SC2086
 run nonzero $CPUPUB $KVM HARDCHARGER_VERSION=2.13.0 -- --prefix "$CP"

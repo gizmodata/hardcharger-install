@@ -62,9 +62,12 @@ GLIBC_FLOOR="2.28"
 # x86-64-v3, Arrow for x86-64-v2) and, from this version on, the baseline one for any x86-64 CPU
 # (hardcharger-linux-amd64-baseline.tar.gz), for VMs whose CPU model hides AVX2 (QEMU's kvm64).
 BASELINE_FROM="2.13.2"
-# The /proc/cpuinfo flags the optimized build needs (x86-64-v3, and v2 below it; the same list as
-# the Python package's). abm is LZCNT, pni SSE3; the kernel lists avx only when it saves the AVX registers.
-X86_64_V3_FLAGS="cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave"
+# The /proc/cpuinfo flags that tell the optimized build will run (x86-64-v3, and v2 below it); pni is
+# SSE3. Not abm (LZCNT) or xsave, which the binaries' own CPUID check still requires: every CPU with
+# AVX2 and BMI2 has LZCNT, and the kernel lists avx only when it saves the AVX state (with XSAVE), so
+# on real hardware they add nothing, while Docker's x86-64 emulation on Apple silicon (Rosetta)
+# leaves both out of /proc/cpuinfo yet runs the optimized build.
+X86_64_V3_FLAGS="cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma movbe"
 # A version directory holding the baseline build has this file, saying "baseline". One without it
 # (every install before the baseline build existed) holds the optimized build.
 BUILD_MARKER=".hardcharger-build"
@@ -409,8 +412,7 @@ baseline_released() { version_ge "${1%%[-+]*}" "$BASELINE_FROM"; }
 
 # The baseline build is released from $BASELINE_FROM on. Asked for by name for an older version $1,
 # that is an error (not a 404). Chosen by auto, the optimized build is tried instead: /proc/cpuinfo
-# can leave out features the CPU runs (Docker's x86-64 emulation on Apple silicon lists no abm or
-# xsave, yet runs the optimized build), and check_build runs the build before anything switches, so
+# can leave out features the CPU runs (an emulator), and check_build runs the build before anything switches, so
 # on a CPU that really lacks them (it stops with "Illegal instruction") nothing changes.
 check_baseline_released() {
   [ "$BUILD" = baseline ] || return 0

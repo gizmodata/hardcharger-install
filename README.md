@@ -158,7 +158,9 @@ existed) holds the optimized build. Put `~/.hardcharger/bin` on your `PATH` (the
   since releases don't publish it.
 - **The CPU, on Linux x86-64.** It reads `/proc/cpuinfo`'s `flags` for the x86-64-v3 features
   the optimized build needs (`cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c
-  fma abm movbe xsave`) and installs the baseline build when one is missing (see Install). If it
+  fma movbe`; not `abm` or `xsave`, which come with AVX2/BMI2 and with the kernel listing `avx` on
+  real hardware, and which Docker's x86-64 emulation on Apple silicon leaves out although the
+  optimized build runs there) and installs the baseline build when one is missing (see Install). If it
   can't read them, it installs the optimized build, which from 2.13.2 on checks the CPU itself
   and names the baseline build instead of stopping with "Illegal instruction".
 - **The download.** It checks the tarball against the release's `SHA256SUMS` when the release

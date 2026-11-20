@@ -15,15 +15,15 @@ All notable changes to the Hardcharger installer are documented here. The format
   with QEMU's `kvm64` CPU model. `install.sh` takes `--cpu-target <auto|optimized|baseline>` and
   `HARDCHARGER_CPU_TARGET` (the Python package's setting, same values). `auto`, the default, reads
   the first `flags` line of `/proc/cpuinfo` on Linux x86-64 only, and installs the baseline build
-  when one of `cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe
-  xsave` is missing, saying which, that it is slower, that a VM's CPU model can hide the host's
+  when one of `cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma movbe` is
+  missing (not `abm` or `xsave`: redundant on real hardware given AVX2, BMI2 and the kernel's `avx`,
+  and left out by Docker's x86-64 emulation on Apple silicon, which runs the optimized build), saying which, that it is slower, that a VM's CPU model can hide the host's
   features, and how to choose; when `/proc/cpuinfo` can't be read, the optimized build. Capable CPUs
   and the other platforms see no change. `baseline` on macOS, Linux arm64 or Windows (`install.ps1
   -CpuTarget`, which accepts `auto` and `optimized`) is an error, and so is `baseline` for a version
   before 2.13.2 ("the baseline build is released from 2.13.2 on"). For such a version `auto` tries
-  the optimized build and installs it only if it runs: Docker's x86-64 emulation on Apple silicon
-  lists no `abm` or `xsave` in `/proc/cpuinfo` yet runs it, and on a CPU that really lacks them the
-  build dies of SIGILL in its `--version` check, which now says why and points to 2.13.2's
+  the optimized build and installs it only if it runs (an emulator can run it without listing every
+  feature), and on a CPU that really lacks them the build dies of SIGILL in its `--version` check, which now says why and points to 2.13.2's
   baseline build. The baseline tarball is checked like the optimized one (`SHA256SUMS`, GitHub's
   digest, `HARDCHARGER_INSTALL_MIRROR`, `HARDCHARGER_INSTALL_SHA256`).
 - A baseline install is marked by `versions/<v>/.hardcharger-build` (written by the installer only;

@@ -90,6 +90,9 @@ printf 'model name\t: Common KVM processor\nflags\t\t: fpu de pse tsc msr pae mc
 # Ivy Bridge: AVX but no AVX2.
 printf 'flags\t\t: fpu sse sse2 ssse3 cx16 sse4_1 sse4_2 popcnt pni lahf_lm xsave avx f16c\n' > "$ROOT/ivybridge"
 printf 'processor\t: 0\nFeatures\t: fp asimd\n' > "$ROOT/noflags"
+# Docker's x86-64 emulation on Apple silicon (Rosetta), as its /proc/cpuinfo shows it: no abm, no
+# xsave, yet the optimized build runs there.
+printf 'model name\t: VirtualApple @ 2.50GHz\nflags\t\t: fpu tsc de cx8 apic sep cmov pat pse36 clflush mmx fxsr sse sse2 syscall nx lm rep_good nopl pni cpuid pclmulqdq ssse3 cx16 sse4_1 popcnt sse4_2 aes lahf_lm movbe fma avx f16c rdrand bmi1 avx2 bmi2\n' > "$ROOT/rosetta"
 L="FAKE_S=Linux FAKE_M=x86_64 FAKE_GLIBC=2.39"
 OPT="Downloading Hardcharger 2.13.2 for linux-amd64 (hardcharger-linux-amd64.tar.gz)"
 BASE="Downloading Hardcharger 2.13.2 for linux-amd64 (hardcharger-linux-amd64-baseline.tar.gz)"
@@ -98,10 +101,11 @@ V2132=HARDCHARGER_VERSION=2.13.2
 {
 check "auto, a v3 CPU: optimized"               pass   "$OPT"  $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/v3"
 check "auto, kvm64: baseline"                   pass   "$BASE" $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
-check "auto, kvm64: says what's missing"        pass   "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave, which Hardcharger's optimized Linux x86-64 build needs (x86-64-v3: AVX2), so this installer uses the baseline build (hardcharger-linux-amd64-baseline.tar.gz). It runs on any x86-64 CPU, but slower." $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
+check "auto, kvm64: says what's missing"        pass   "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma movbe, which Hardcharger's optimized Linux x86-64 build needs (x86-64-v3: AVX2), so this installer uses the baseline build (hardcharger-linux-amd64-baseline.tar.gz). It runs on any x86-64 CPU, but slower." $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
 check "auto, kvm64: the VM hint"                pass   'its CPU model setting (QEMU'"'"'s or Proxmox'"'"'s "kvm64" or "qemu64", for example) can hide the host'"'"'s CPU features: set it to "host"' $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
 check "auto, kvm64: how to choose"              pass   "To choose the build yourself: --cpu-target optimized or --cpu-target baseline (HARDCHARGER_CPU_TARGET=optimized or =baseline)." $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
-check "auto, Ivy Bridge (AVX, no AVX2)"         pass   "this CPU lacks avx2 bmi1 bmi2 fma abm movbe, which" $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/ivybridge"
+check "auto, Ivy Bridge (AVX, no AVX2)"         pass   "this CPU lacks avx2 bmi1 bmi2 fma movbe, which" $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/ivybridge"
+check "auto, Rosetta (no abm, xsave): optimized" pass   "$OPT"  $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/rosetta"
 check "auto, no flags line: optimized"          pass   "$OPT"  $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/noflags"
 check "auto, no cpuinfo at all: optimized"      pass   "$OPT"  $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/does-not-exist"
 check "optimized forced on kvm64"               pass   "$OPT"  $L $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64" HARDCHARGER_CPU_TARGET=optimized
@@ -114,7 +118,7 @@ check "baseline on macOS"                       refuse "the baseline build is fo
 check "baseline on Linux arm64"                 refuse "the baseline build is for Linux on x86-64 only, and this is linux-arm64" FAKE_S=Linux FAKE_M=aarch64 FAKE_GLIBC=2.39 $V2132 HARDCHARGER_CPU_TARGET=baseline
 check "auto on Linux arm64 ignores cpuinfo"     pass   "Downloading Hardcharger 2.13.2 for linux-arm64 (hardcharger-linux-arm64.tar.gz)" FAKE_S=Linux FAKE_M=aarch64 FAKE_GLIBC=2.39 $V2132 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
 check "baseline forced, 2.13.1: not released"   refuse "Hardcharger 2.13.1 has no baseline build: the baseline build is released from 2.13.2 on. Install 2.13.2 or later" $L HARDCHARGER_VERSION=2.13.1 HARDCHARGER_CPU_TARGET=baseline
-check "auto on kvm64, 2.13.1: says so"         pass   "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave, which Hardcharger's optimized Linux x86-64 build needs (x86-64-v3: AVX2), and Hardcharger 2.13.1 has no baseline build: the baseline build is released from 2.13.2 on. Trying 2.13.1's optimized build: it is installed only if it runs here" $L HARDCHARGER_VERSION=2.13.1 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
+check "auto on kvm64, 2.13.1: says so"         pass   "this CPU lacks lahf_lm popcnt sse4_1 sse4_2 ssse3 avx avx2 bmi1 bmi2 f16c fma movbe, which Hardcharger's optimized Linux x86-64 build needs (x86-64-v3: AVX2), and Hardcharger 2.13.1 has no baseline build: the baseline build is released from 2.13.2 on. Trying 2.13.1's optimized build: it is installed only if it runs here" $L HARDCHARGER_VERSION=2.13.1 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
 check "auto on kvm64, 2.13.1: the way on"        pass   "For the baseline build, which runs on any x86-64 CPU, install the latest release (the default) or pin 2.13.2 or newer." $L HARDCHARGER_VERSION=2.13.1 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
 check "auto on kvm64, 2.13.1: tries optimized"   pass   "Downloading Hardcharger 2.13.1 for linux-amd64 (hardcharger-linux-amd64.tar.gz)" $L HARDCHARGER_VERSION=2.13.1 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/kvm64"
 check "auto on a v3 CPU, 2.13.1: optimized"     pass   "Downloading Hardcharger 2.13.1 for linux-amd64 (hardcharger-linux-amd64.tar.gz)" $L HARDCHARGER_VERSION=2.13.1 HARDCHARGER_INSTALL_TEST_CPUINFO="$ROOT/v3"
